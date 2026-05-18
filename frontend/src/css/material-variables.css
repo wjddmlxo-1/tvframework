@@ -1,0 +1,89 @@
+@charset "utf-8";
+
+/**
+ * Material Design 3 - Design Tokens (m3.material.io 참조)
+ * public/src/css/material-variables.css
+ */
+:root {
+
+
+  /* Primary & Secondary (M3) */
+  --md-primary: #1976d2;
+  --md-primary-hover: #1565c0;
+  --md-primary-container: #dbeafe;
+  --md-on-primary-container: #0d47a1;
+  --md-primary-light: #e3f2fd;
+  --md-secondary: #424242;
+  --md-on-primary: #ffffff;
+  --md-on-surface: #1c1b1f;
+  --md-on-surface-variant: #49454f;
+  --md-outline: #e0e0e0;
+  --md-outline-variant: #eeeeee;
+
+  /* Surface & Background (M3) */
+  --md-surface: #ffffff;
+  --md-surface-dim: #e6e0e9;
+  --md-surface-bright: #ffffff;
+  --md-surface-container: #f5f5f5;
+  --md-surface-container-low: #f8f8f8;
+  --md-surface-container-high: #eeeeee;
+  --md-surface-container-highest: #e0e0e0;
+  --md-background: #fafafa;
+
+  /* State */
+  --md-error: #ba1a1a;
+  --md-error-container: #ffdad6;
+  --md-success: #2e7d32;
+  --md-warning: #ed6c02;
+
+  /* Elevation (M3 - tonal shadow) */
+  --md-elevation-0: none;
+  --md-elevation-1: 0 1px 2px 0 rgba(0, 0, 0, 0.3), 0 1px 6px 1px rgba(0, 0, 0, 0.15);
+  --md-elevation-2: 0 2px 6px 2px rgba(0, 0, 0, 0.15), 0 1px 2px 0 rgba(0, 0, 0, 0.3);
+  --md-elevation-3: 0 4px 8px 3px rgba(0, 0, 0, 0.15), 0 1px 3px 0 rgba(0, 0, 0, 0.3);
+  --md-elevation-4: 0 6px 10px 4px rgba(0, 0, 0, 0.15), 0 2px 3px 0 rgba(0, 0, 0, 0.3);
+
+  /* Shape (M3 - rounded corners) */
+  --md-radius-xs: 4px;
+  --md-radius-sm: 8px;
+  --md-radius-md: 12px;
+  --md-radius-lg: 16px;
+  --md-radius-xl: 28px;
+  --md-radius-full: 9999px;
+
+  /* Typography (M3) */
+  --md-font-family: "Roboto", "Noto Sans KR", -apple-system, BlinkMacSystemFont, sans-serif;
+  --md-font-size-caption: 12px;
+  --md-font-size-body: 14px;
+  --md-font-size-body-lg: 16px;
+  --md-font-size-title: 18px;
+  --md-font-size-headline: 20px;
+  --md-font-size-display: 24px;
+  --md-font-weight-regular: 400;
+  --md-font-weight-medium: 500;
+  --md-font-weight-bold: 700;
+  --md-line-height-tight: 1.25;
+  --md-line-height-normal: 1.5;
+  --md-line-height-relaxed: 1.75;
+
+  /* Spacing */
+  --md-space-1: 4px;
+  --md-space-2: 8px;
+  --md-space-3: 12px;
+  --md-space-4: 16px;
+  --md-space-5: 20px;
+  --md-space-6: 24px;
+  --md-space-8: 32px;
+  --md-space-10: 40px;
+
+  /* Layout - 첨부 시안 톤(상단/좌측 연한 쿨그레이) */
+  --md-header-bg: #f2f4f8;
+  --md-header-height: 64px;
+  --md-sidebar-width: 260px;
+  --md-sidebar-bg: #f5f6fa;
+  --md-content-max-width: 100%;
+  --md-content-padding: 0;
+  --md-contents-inner-padding: 24px;
+
+
+}
