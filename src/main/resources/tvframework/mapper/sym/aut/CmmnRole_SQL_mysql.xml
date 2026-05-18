@@ -1,0 +1,140 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="CmmnRoleMapper">
+
+    <!-- 롤 유형 공통코드 (CMMNCODE.572) -->
+    <select id="selectRoleTypeOptions" parameterType="map" resultType="tvframework.sym.cmm.dto.CodeOptionDTO">
+        SELECT A.DETAIL_CODE_VALUE AS code
+             , B.MESSAGE_CN AS name
+          FROM CM_CODE_DETAIL A
+         INNER JOIN CM_MESSAGE_LANG B ON B.LANG_KEY = A.CODE_LANG_KEY AND B.CMPNY_CD = A.CMPNY_CD
+         WHERE A.CODE_ID = 'CMMNCODE.572'
+           AND A.USE_FL = 'Y'
+           AND A.CMPNY_CD = #{companyCode}
+           AND B.LANG_CODE = #{languageCode}
+         ORDER BY A.SORTING_SQ ASC
+    </select>
+
+    <select id="selectRoleList" parameterType="map" resultType="tvframework.sym.cmm.dto.CmmnRoleDTO">
+        SELECT A.CMPNY_CD AS cmpnyCd
+             , A.ROLE_CD AS roleCd
+             , A.ROLE_NM AS roleNm
+             , A.ROLE_TY AS roleTy
+             , A.ROLE_PTTRN AS rolePttrn
+             , A.ROLE_DC AS roleDc
+             , A.ROLE_SORT AS roleSort
+             , DATE_FORMAT(A.CREATION_DT, '%Y-%m-%d') AS creationDt
+          FROM CM_ROLE A
+         WHERE A.CMPNY_CD = #{cmpnyCd}
+        <if test="roleTy != null and roleTy != ''">
+           AND A.ROLE_TY = #{roleTy}
+        </if>
+        <if test="searchKeyword != null and searchKeyword != ''">
+           AND (A.ROLE_CD LIKE CONCAT('%', #{searchKeyword}, '%')
+                OR A.ROLE_NM LIKE CONCAT('%', #{searchKeyword}, '%')
+                OR IFNULL(A.ROLE_DC,'') LIKE CONCAT('%', #{searchKeyword}, '%'))
+        </if>
+         ORDER BY A.ROLE_SORT, A.ROLE_CD
+         LIMIT #{recordCountPerPage} OFFSET #{offset}
+    </select>
+
+    <select id="selectRoleListTotCnt" parameterType="map" resultType="int">
+        SELECT COUNT(*)
+          FROM CM_ROLE A
+         WHERE A.CMPNY_CD = #{cmpnyCd}
+        <if test="roleTy != null and roleTy != ''">
+           AND A.ROLE_TY = #{roleTy}
+        </if>
+        <if test="searchKeyword != null and searchKeyword != ''">
+           AND (A.ROLE_CD LIKE CONCAT('%', #{searchKeyword}, '%')
+                OR A.ROLE_NM LIKE CONCAT('%', #{searchKeyword}, '%')
+                OR IFNULL(A.ROLE_DC,'') LIKE CONCAT('%', #{searchKeyword}, '%'))
+        </if>
+    </select>
+
+    <select id="selectRoleDetail" parameterType="map" resultType="tvframework.sym.cmm.dto.CmmnRoleDTO">
+        SELECT A.CMPNY_CD AS cmpnyCd
+             , A.ROLE_CD AS roleCd
+             , A.ROLE_NM AS roleNm
+             , A.ROLE_TY AS roleTy
+             , A.ROLE_PTTRN AS rolePttrn
+             , A.ROLE_DC AS roleDc
+             , A.ROLE_SORT AS roleSort
+             , DATE_FORMAT(A.CREATION_DT, '%Y-%m-%d') AS creationDt
+          FROM CM_ROLE A
+         WHERE A.CMPNY_CD = #{cmpnyCd}
+           AND A.ROLE_CD = #{roleCd}
+    </select>
+
+    <insert id="insertRole" parameterType="map">
+        INSERT INTO CM_ROLE (
+            CMPNY_CD, ROLE_CD, ROLE_NM, ROLE_TY, ROLE_PTTRN, ROLE_DC, ROLE_SORT, CREATION_ID, CREATION_DT
+        ) VALUES (
+            #{cmpnyCd}, #{roleCd}, #{roleNm}, #{roleTy}, #{rolePttrn}, IFNULL(#{roleDc},''), #{roleSort, jdbcType=SMALLINT},
+            #{creationId}, NOW()
+        )
+    </insert>
+
+    <update id="updateRole" parameterType="map">
+        UPDATE CM_ROLE
+           SET ROLE_NM = #{roleNm}
+             , ROLE_TY = #{roleTy}
+             , ROLE_PTTRN = #{rolePttrn}
+             , ROLE_DC = #{roleDc}
+             , ROLE_SORT = #{roleSort, jdbcType=SMALLINT}
+             , UPDATE_ID = #{updateId}
+             , UPDATE_DT = NOW()
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND ROLE_CD = #{roleCd}
+    </update>
+
+    <delete id="deleteRole" parameterType="map">
+        DELETE FROM CM_ROLE
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND ROLE_CD = #{roleCd}
+    </delete>
+
+    <delete id="deleteAuthorRoleByRole" parameterType="map">
+        DELETE FROM CM_AUTHOR_ROLE_RELATE
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND ROLE_CD = #{roleCd}
+    </delete>
+
+    <delete id="deleteAuthorRoleByAuthor" parameterType="map">
+        DELETE FROM CM_AUTHOR_ROLE_RELATE
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND AUTHOR_CD = #{authorCd}
+    </delete>
+
+    <insert id="insertAuthorRole" parameterType="map">
+        INSERT INTO CM_AUTHOR_ROLE_RELATE (CMPNY_CD, AUTHOR_CD, ROLE_CD, CREATION_ID, CREATION_DT)
+        VALUES (#{cmpnyCd}, #{authorCd}, #{roleCd}, #{creationId}, NOW())
+    </insert>
+
+    <!-- 권한에 매핑된 롤 목록 + 전체 롤(체크 여부) -->
+    <select id="selectRolesWithMappingForAuthor" parameterType="map" resultType="tvframework.sym.cmm.dto.CmmnRoleDTO">
+        SELECT R.CMPNY_CD AS cmpnyCd
+             , R.ROLE_CD AS roleCd
+             , R.ROLE_NM AS roleNm
+             , R.ROLE_TY AS roleTy
+             , R.ROLE_PTTRN AS rolePttrn
+             , R.ROLE_DC AS roleDc
+             , R.ROLE_SORT AS roleSort
+             , CASE WHEN AR.ROLE_CD IS NOT NULL THEN 'Y' ELSE 'N' END AS mappedYn
+          FROM CM_ROLE R
+          LEFT JOIN CM_AUTHOR_ROLE_RELATE AR
+            ON AR.CMPNY_CD = R.CMPNY_CD
+           AND AR.ROLE_CD = R.ROLE_CD
+           AND AR.AUTHOR_CD = #{authorCd}
+         WHERE R.CMPNY_CD = #{cmpnyCd}
+        <if test="roleTy != null and roleTy != ''">
+           AND R.ROLE_TY = #{roleTy}
+        </if>
+        <if test="searchKeyword != null and searchKeyword != ''">
+           AND (R.ROLE_CD LIKE CONCAT('%', #{searchKeyword}, '%')
+                OR R.ROLE_NM LIKE CONCAT('%', #{searchKeyword}, '%'))
+        </if>
+         ORDER BY R.ROLE_SORT, R.ROLE_CD
+    </select>
+</mapper>

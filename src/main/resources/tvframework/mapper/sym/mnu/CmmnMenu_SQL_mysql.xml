@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="CmmnMenuMapper">
+
+    <!-- 메뉴목록 트리 조회 (회사코드·언어코드 기준, CM_MESSAGE_LANG 조인으로 메뉴명 표시) -->
+    <select id="selectMenuTree" parameterType="map" resultType="map">
+        WITH RECURSIVE CODE_HIERARCHY AS (
+        SELECT 	C.CMPNY_CD, 
+				C.MENU_ID, 
+				C.MENU_NM_CD, 
+				C.PROGRM_FILE_NM, 
+				C.UPPER_MENU_ID, 
+				C.SORT_ORD, 
+				C.USE_FL,
+				CAST(CONCAT(LPAD(C.SORT_ORD, 5, '0'), '_', C.MENU_ID) AS CHAR(2000)) AS PATH,
+        		1 AS TREE_LEVEL
+           FROM CM_MENU C
+          WHERE C.UPPER_MENU_ID = '#' AND C.CMPNY_CD = #{cmpnyCd}
+            UNION ALL
+		SELECT 	C.CMPNY_CD, 
+				C.MENU_ID, 
+				C.MENU_NM_CD, 
+				C.PROGRM_FILE_NM, 
+				C.UPPER_MENU_ID, 
+				C.SORT_ORD, 
+				C.USE_FL,
+				CAST(CONCAT(CH.PATH, '&gt;',LPAD(C.SORT_ORD, 5, '0'), '_', C.MENU_ID) AS CHAR(2000)) AS PATH,
+             	CH.TREE_LEVEL + 1 AS TREE_LEVEL
+           FROM CM_MENU C
+          INNER JOIN CODE_HIERARCHY CH ON C.UPPER_MENU_ID = CH.MENU_ID
+          WHERE C.CMPNY_CD = #{cmpnyCd}
+        )
+     SELECT CH.CMPNY_CD 		AS cmpnyCd, 
+			CH.MENU_ID 			AS menuId, 
+			B.MESSAGE_CN 		AS menuNm, 
+			CH.PROGRM_FILE_NM 	AS progrmFileNm,
+            CH.UPPER_MENU_ID 	AS upperMenuId, 
+			CH.USE_FL 			AS useFl, 
+			CH.SORT_ORD 		AS sortOrd, 
+			CH.PATH 			AS path, 
+			CH.TREE_LEVEL 		AS treeLevel
+       FROM CODE_HIERARCHY CH
+      INNER JOIN CM_MESSAGE_LANG B ON B.LANG_KEY = CH.MENU_NM_CD
+            AND B.CMPNY_CD = CH.CMPNY_CD
+            AND B.LANG_CODE = #{langGb}
+        ORDER BY CH.PATH 
+    </select>
+
+    <!-- 상위위메뉴 검색 팝업용 트리 (Directory만: PROGRM_FILE_NM = 'dir') -->
+    <select id="selectMenuTreeForSearch" parameterType="map" resultType="map">
+        WITH RECURSIVE CODE_HIERARCHY AS (
+            SELECT
+                C.CMPNY_CD,
+                C.MENU_ID,
+                C.MENU_NM_CD,
+                C.PROGRM_FILE_NM,
+                C.UPPER_MENU_ID,
+                C.SORT_ORD,
+                C.USE_FL,
+                CAST(C.MENU_ID AS CHAR(2000)) AS PATH,
+                1 AS TREE_LEVEL
+            FROM CM_MENU C
+            WHERE C.UPPER_MENU_ID = '#'
+            AND C.CMPNY_CD = #{cmpnyCd}
+            AND C.PROGRM_FILE_NM = 'dir'
+            AND C.USE_FL = 'Y'
+            UNION ALL
+            SELECT
+                C.CMPNY_CD,
+                C.MENU_ID,
+                C.MENU_NM_CD,
+                C.PROGRM_FILE_NM,
+                C.UPPER_MENU_ID,
+                C.SORT_ORD,
+                C.USE_FL,
+                CAST(CONCAT(CH.PATH, '&gt;', C.MENU_ID) AS CHAR(5000)) AS PATH,
+                CH.TREE_LEVEL + 1 AS TREE_LEVEL
+            FROM CM_MENU C
+            INNER JOIN CODE_HIERARCHY CH ON C.UPPER_MENU_ID = CH.MENU_ID AND C.CMPNY_CD = CH.CMPNY_CD
+            WHERE C.PROGRM_FILE_NM = 'dir'
+            AND C.USE_FL = 'Y'
+        )
+        SELECT
+            CH.CMPNY_CD         AS cmpnyCd,
+            CH.MENU_ID          AS menuId,
+            B.MESSAGE_CN        AS menuNm,
+            CH.PROGRM_FILE_NM   AS progrmFileNm,
+            CH.UPPER_MENU_ID    AS upperMenuId,
+            CH.USE_FL           AS useFl,
+            CH.SORT_ORD         AS sortOrd,
+            CH.PATH             AS path,
+            CH.TREE_LEVEL       AS treeLevel
+        FROM CODE_HIERARCHY CH
+        INNER JOIN CM_MESSAGE_LANG B ON B.LANG_KEY = CH.MENU_NM_CD
+            AND B.CMPNY_CD = CH.CMPNY_CD
+            AND B.LANG_CODE = #{langGb}
+        ORDER BY CH.PATH
+    </select>
+
+    <!-- 메뉴 상세 조회 -->
+    <select id="selectMenuDetail" parameterType="map" resultType="tvframework.sym.mnu.dto.CmmnMenuDTO">
+        SELECT
+            C.CMPNY_CD          AS cmpnyCd,
+            C.MENU_ID           AS menuId,
+            C.MENU_NM_CD        AS menuNmCd,
+            B.MESSAGE_CN        AS menuNm,
+            C.PROGRM_FILE_NM    AS progrmFileNm,
+            C.UPPER_MENU_ID     AS upperMenuId,
+            C.SORT_ORD          AS sortOrd,
+            C.IMAGE_PATH        AS imagePath,
+            C.IMAGE_NM          AS imageNm,
+            C.USE_FL            AS useFl,
+            C.MENU_DC           AS menuDc
+        FROM CM_MENU C
+        INNER JOIN CM_MESSAGE_LANG B ON B.LANG_KEY = C.MENU_NM_CD AND B.LANG_CODE = #{langGb}
+        WHERE C.MENU_ID = #{menuId}
+        AND C.CMPNY_CD = #{cmpnyCd}
+        LIMIT 1
+    </select>
+
+    <!-- 메뉴 등록 -->
+    <insert id="insertMenu" parameterType="map">
+        INSERT INTO CM_MENU (
+            CMPNY_CD, MENU_ID, MENU_NM_CD, PROGRM_FILE_NM, UPPER_MENU_ID,
+            SORT_ORD, MENU_DC, USE_FL, IMAGE_PATH, IMAGE_NM,
+            CREATION_ID, CREATION_DT
+        ) VALUES (
+            #{cmpnyCd},
+            #{menuId},
+            #{menuNmCd},
+            #{progrmFileNm},
+            #{upperMenuId},
+            #{sortOrd},
+            #{menuDc},
+            #{useFl},
+            #{imagePath},
+            #{imageNm},
+            #{creationId},
+            NOW()
+        )
+    </insert>
+
+    <!-- 메뉴 수정 -->
+    <update id="updateMenu" parameterType="map">
+        UPDATE CM_MENU
+        SET MENU_NM_CD = #{menuNmCd},
+            PROGRM_FILE_NM = #{progrmFileNm},
+            UPPER_MENU_ID = #{upperMenuId},
+            SORT_ORD = #{sortOrd},
+            MENU_DC = #{menuDc},
+            USE_FL = #{useFl},
+            IMAGE_PATH = #{imagePath},
+            IMAGE_NM = #{imageNm},
+            UPDATE_ID = #{updateId},
+            UPDATE_DT = NOW()
+        WHERE MENU_ID = #{menuId}
+        AND CMPNY_CD = #{cmpnyCd}
+    </update>
+
+    <!-- 메뉴 삭제 -->
+    <delete id="deleteMenu" parameterType="map">
+        DELETE FROM CM_MENU
+        WHERE MENU_ID = #{menuId}
+        AND CMPNY_CD = #{cmpnyCd}
+    </delete>
+
+    <!-- 하위 메뉴 존재 여부 -->
+    <select id="checkChildren" parameterType="map" resultType="string">
+        SELECT CASE WHEN COUNT(*) > 0 THEN 'O' ELSE 'X' END AS ox
+        FROM CM_MENU
+        WHERE UPPER_MENU_ID = #{menuId}
+        AND CMPNY_CD = #{cmpnyCd}
+    </select>
+
+    <!-- 로그인 사용자별 권한 메뉴 -->
+    <select id="selectSidebarMenuForUser" parameterType="map" resultType="map">
+        <![CDATA[
+        WITH RECURSIVE CODE_HIERARCHY AS (
+            SELECT C.CMPNY_CD, C.MENU_ID, C.MENU_NM_CD, C.PROGRM_FILE_NM,
+                   C.UPPER_MENU_ID, C.SORT_ORD, C.USE_FL,
+                   CASE WHEN IMAGE_PATH IS NULL OR IMAGE_PATH = '/' OR IMAGE_PATH = ''
+                             OR IMAGE_NM IS NULL OR IMAGE_NM = '/' OR IMAGE_PATH = ''
+                        THEN NULL ELSE CONCAT(IMAGE_PATH, IMAGE_NM)
+                   END AS IMAGE_FULL_PATH,
+                   CAST(CONCAT(LPAD(C.SORT_ORD, 5, '0'), '_', C.MENU_ID) AS CHAR(2000)) AS PATH,
+                   1 AS TREE_LEVEL
+              FROM CM_MENU C
+             WHERE C.UPPER_MENU_ID = '#'
+               AND C.CMPNY_CD = #{cmpnyCd}
+             UNION ALL
+            SELECT C.CMPNY_CD, C.MENU_ID, C.MENU_NM_CD, C.PROGRM_FILE_NM,
+                   C.UPPER_MENU_ID, C.SORT_ORD, C.USE_FL,
+                   CASE WHEN IMAGE_PATH IS NULL OR IMAGE_PATH = '/' OR IMAGE_PATH = ''
+                             OR IMAGE_NM IS NULL OR IMAGE_NM = '/' OR IMAGE_PATH = ''
+                        THEN NULL ELSE CONCAT(IMAGE_PATH, IMAGE_NM)
+                   END AS IMAGE_FULL_PATH,
+                   CAST(CONCAT(CH.PATH, '>', LPAD(C.SORT_ORD, 5, '0'), '_', C.MENU_ID) AS CHAR(2000)) AS PATH,
+                   CH.TREE_LEVEL + 1 AS TREE_LEVEL
+              FROM CM_MENU C
+             INNER JOIN CODE_HIERARCHY CH
+                ON C.UPPER_MENU_ID = CH.MENU_ID
+             WHERE C.CMPNY_CD = #{cmpnyCd}
+               AND C.USE_FL = 'Y'
+        ), DEPT AS (
+            SELECT A.MBRSH_SQ, A.DEPT_CD
+              FROM CM_USER_ORGNZT_MBRSH A
+             INNER JOIN CM_USER B ON B.USER_ID = A.USER_ID
+             WHERE A.CMPNY_CD = #{cmpnyCd} AND A.USER_ID = #{userId} AND A.USE_FL = 'Y'
+             UNION
+            SELECT C.DPRLR_ID AS MBRSH_SQ, C.DEPT_CD
+              FROM CM_DEPT C
+             WHERE C.CMPNY_CD = #{cmpnyCd}
+               AND C.DPRLR_ID IN (
+                    SELECT A.MBRSH_SQ
+                      FROM CM_USER_ORGNZT_MBRSH A
+                     INNER JOIN CM_USER B ON B.USER_ID = A.USER_ID
+                     WHERE A.CMPNY_CD = C.CMPNY_CD AND A.USER_ID = #{userId} AND A.USE_FL = 'Y'
+               )
+        )
+        SELECT CH.CMPNY_CD AS cmpnyCd,
+               CH.MENU_ID AS menuId,
+               B.MESSAGE_CN AS menuNm,
+               CH.IMAGE_FULL_PATH AS imageFullPath,
+               CH.PROGRM_FILE_NM AS progrmFileNm,
+               C.PROGRM_URL AS progrmUrl,
+               COALESCE(NULLIF(TRIM(C.PROGRM_URL), ''), CH.PROGRM_FILE_NM) AS navigateUrl,
+               CH.UPPER_MENU_ID AS upperMenuId,
+               CH.USE_FL AS useFl,
+               CH.SORT_ORD AS sortOrd,
+               CH.PATH AS path,
+               CH.TREE_LEVEL AS treeLevel,
+               CASE WHEN AMD.MENU_ID IS NULL OR CH.USE_FL = 'N' THEN 'N' ELSE 'Y' END AS selectYn
+          FROM CODE_HIERARCHY CH
+         INNER JOIN CM_MESSAGE_LANG B ON B.LANG_KEY = CH.MENU_NM_CD AND B.CMPNY_CD = CH.CMPNY_CD AND B.LANG_CODE = #{languageCode}
+         INNER JOIN CM_PROGRM C ON C.CMPNY_CD = CH.CMPNY_CD AND C.PROGRM_FILE_NM = CH.PROGRM_FILE_NM AND C.USE_FL = 'Y'
+         INNER JOIN (
+              SELECT DISTINCT AM.MENU_ID, AM.CMPNY_CD
+                FROM CM_AUTHOR_MENU AM
+               WHERE AM.AUTHOR_CD IN (
+                    SELECT AUTHOR_CD
+                      FROM (
+                          SELECT AUTHOR_CD
+                            FROM CM_AUTHOR_USER
+                           WHERE USER_TY = 'USER' AND CMPNY_CD = #{cmpnyCd}
+                             AND USER_CD IN (SELECT MBRSH_SQ FROM DEPT)
+                           UNION
+                          SELECT AUTHOR_CD
+                            FROM CM_AUTHOR_USER
+                           WHERE USER_TY = 'GROUP' AND CMPNY_CD = #{cmpnyCd}
+                             AND USER_CD IN (
+                                  SELECT GROUP_ID
+                                    FROM CM_GROUP_USER
+                                   WHERE CMPNY_CD = #{cmpnyCd} AND USE_FL = 'Y'
+                                     AND MBRSH_SQ IN (SELECT MBRSH_SQ FROM DEPT)
+                               )
+                           UNION
+                          SELECT AUTHOR_CD
+                            FROM CM_AUTHOR_USER
+                           WHERE USER_TY = 'DEPT' AND CMPNY_CD = #{cmpnyCd}
+                             AND USER_CD IN (SELECT DEPT_CD FROM DEPT)
+                      ) A
+                )
+           ) AMD ON AMD.CMPNY_CD = CH.CMPNY_CD AND AMD.MENU_ID = CH.MENU_ID
+        ORDER BY CH.PATH
+        ]]>
+    </select>
+</mapper>

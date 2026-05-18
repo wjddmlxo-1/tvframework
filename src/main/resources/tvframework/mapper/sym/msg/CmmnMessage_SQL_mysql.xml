@@ -1,0 +1,286 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" 
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="CmmnMessageMapper">
+    <!-- 회사코드, 회사명 조회 -->
+    <select id="selectCompanyList" parameterType="map" resultType="tvframework.sym.cmm.dto.CmmnCompanyOptionDTO">
+            SELECT DISTINCT CMPNY_CD
+                , CMPNY_NM
+            FROM (
+                SELECT BASE.CMPNY_CD
+                    , B.CMPNY_NM
+                FROM (
+                    SELECT A.CMPNY_CD FROM CM_AUTHOR_USER A 
+                    INNER JOIN CM_USER_ORGNZT_MBRSH B 
+                            ON B.MBRSH_SQ = A.USER_CD AND B.USER_ID =  #{loginUserId}
+                    WHERE A.AUTHOR_CD = 'AUTH_ADMIN' AND A.USER_TY = 'USER'
+                    UNION
+                    SELECT A.CMPNY_CD FROM CM_AUTHOR_USER A 
+                    INNER JOIN CM_USER_ORGNZT_MBRSH B 
+                            ON B.MBRSH_SQ IN (SELECT MBRSH_SQ FROM CM_GROUP_USER WHERE CMPNY_CD = A.CMPNY_CD AND GROUP_ID = A.USER_CD)
+                            AND B.USER_ID = #{loginUserId}
+                    WHERE A.AUTHOR_CD = 'AUTH_ADMIN' AND A.USER_TY = 'GROUP'
+                    UNION
+                    SELECT A.CMPNY_CD FROM CM_AUTHOR_USER A 
+                    INNER JOIN CM_USER_ORGNZT_MBRSH B 
+                            ON B.MBRSH_SQ = A.USER_CD AND B.USER_ID = #{loginUserId}
+                    WHERE A.AUTHOR_CD = 'SYS_ADMIN' AND A.USER_TY = 'USER'
+                    UNION
+                    SELECT A.CMPNY_CD FROM CM_AUTHOR_USER A 
+                    INNER JOIN CM_USER_ORGNZT_MBRSH B 
+                            ON B.MBRSH_SQ IN (SELECT MBRSH_SQ FROM CM_GROUP_USER WHERE CMPNY_CD = A.CMPNY_CD AND GROUP_ID = A.USER_CD)
+                            AND B.USER_ID = #{loginUserId}
+                    WHERE A.AUTHOR_CD = 'SYS_ADMIN' AND A.USER_TY = 'GROUP'
+                    ) BASE
+                INNER JOIN CM_CMPNY B
+                        ON B.CMPNY_CD = BASE.CMPNY_CD AND B.USE_FL = 'Y'
+                UNION ALL
+                SELECT A.CMPNY_CD
+                    , B.CMPNY_NM
+                FROM CM_USER_ORGNZT_MBRSH A
+                INNER JOIN CM_USER U 
+                    ON U.USER_ID = A.USER_ID
+                INNER JOIN CM_CMPNY B 
+                    ON B.CMPNY_CD = A.CMPNY_CD 
+                AND B.USE_FL = 'Y'
+                WHERE A.USER_ID = #{loginUserId}
+                AND A.USE_FL = 'Y' 
+                AND A.RETIRE_YMD > DATE_FORMAT(CURDATE(), '%Y%m%d')
+            ) A
+    </select>
+
+    <!-- 언어 목록 조회  -->
+    <select id="selectLanguages" parameterType="map" resultType="tvframework.sym.cmm.dto.CodeOptionDTO">
+        SELECT A.DETAIL_CODE_VALUE AS code
+             , B.MESSAGE_CN AS name
+          FROM CM_CODE_DETAIL A
+          INNER JOIN CM_MESSAGE_LANG B ON B.LANG_KEY = A.CODE_LANG_KEY AND B.CMPNY_CD = A.CMPNY_CD
+         WHERE A.CODE_ID = 'CMMNCODE.100'
+            AND A.CMPNY_CD = #{companyCode}
+            AND B.LANG_CODE = #{languageCode}
+            AND A.USE_FL = 'Y'
+            ORDER BY A.SORTING_SQ ASC
+    </select>
+
+    <!-- 구분 목록 조회 -->
+    <select id="selectCategories" parameterType="map" resultType="tvframework.sym.cmm.dto.CodeOptionDTO">
+        SELECT A.DETAIL_CODE_ID AS code
+             , B.MESSAGE_CN AS name
+          FROM CM_CODE_DETAIL A
+         INNER JOIN CM_MESSAGE_LANG B ON B.LANG_KEY = A.CODE_LANG_KEY AND B.CMPNY_CD = A.CMPNY_CD
+         WHERE A.CODE_ID = 'CMMNCODE.200'
+           AND A.CMPNY_CD = #{companyCode}
+           AND B.LANG_CODE = #{languageCode}
+           AND A.USE_FL = 'Y'
+         ORDER BY A.SORTING_SQ ASC
+    </select>
+    
+    <!--메시지 리스트 조회 -->
+    <select id="selectMessageList" parameterType="map" resultType="map">
+        SELECT 
+            LANG_GB,
+            LANG_KEY,
+            MESSAGE_CNS
+        FROM (
+            SELECT
+                BASE.LANG_GB,
+                BASE.LANG_KEY,
+                GROUP_CONCAT(
+                    CONCAT(B.DETAIL_CODE_VALUE, ':', IFNULL(M.MESSAGE_CN, ''))
+                    ORDER BY B.SORTING_SQ
+                    SEPARATOR '|'
+                ) AS MESSAGE_CNS
+            FROM (
+                SELECT DISTINCT CMPNY_CD, LANG_GB, LANG_KEY
+                FROM CM_MESSAGE_LANG
+                WHERE 1=1
+                <if test="cmpnyCd != null and cmpnyCd != ''">
+                AND CMPNY_CD = #{cmpnyCd}
+                </if>
+                <if test="category != null and category != ''">
+                AND LANG_GB = #{category}
+                </if>
+            ) BASE
+            CROSS JOIN (
+                SELECT DETAIL_CODE_VALUE, SORTING_SQ
+                FROM CM_CODE_DETAIL
+                WHERE CODE_ID = 'CMMNCODE.100'
+                 <if test="cmpnyCd != null and cmpnyCd != ''">
+                AND CMPNY_CD = #{cmpnyCd}
+                </if>
+                 AND USE_FL = 'Y'
+            ) B
+            LEFT JOIN CM_MESSAGE_LANG M
+                ON M.LANG_GB = BASE.LANG_GB
+                AND M.LANG_KEY = BASE.LANG_KEY
+                AND M.CMPNY_CD = BASE.CMPNY_CD
+                AND M.LANG_CODE = B.DETAIL_CODE_VALUE
+            GROUP BY
+                BASE.CMPNY_CD,
+                BASE.LANG_GB,
+                BASE.LANG_KEY
+        ) A
+        WHERE 1=1
+        <if test="category != null and category != ''">
+            AND LANG_GB = #{category}
+        </if>
+        <if test="searchCondition != null and searchCondition != ''">
+            AND (
+                LANG_KEY LIKE CONCAT('%', #{searchCondition}, '%')
+                OR MESSAGE_CNS LIKE CONCAT('%', #{searchCondition}, '%')
+            )
+        </if>
+        ORDER BY LANG_GB, LANG_KEY
+        LIMIT #{recordCountPerPage} OFFSET #{offset}
+    </select>
+
+    <!-- 메시지 리스트 개수 조회  -->
+    <select id="selectMessageListCount" parameterType="map" resultType="int">
+        SELECT COUNT(*)
+        FROM (
+            SELECT
+                BASE.LANG_GB,
+                BASE.LANG_KEY,
+                GROUP_CONCAT(
+                    IFNULL(M.MESSAGE_CN, '')
+                    ORDER BY B.SORTING_SQ
+                    SEPARATOR '|'
+                ) AS MESSAGE_CNS
+            FROM (
+                SELECT DISTINCT CMPNY_CD, LANG_GB, LANG_KEY
+                FROM CM_MESSAGE_LANG
+                WHERE 1=1
+                <if test="cmpnyCd != null and cmpnyCd != ''">
+                AND CMPNY_CD = #{cmpnyCd}
+                </if>
+                <if test="category != null and category != ''">
+                AND LANG_GB = #{category}
+                </if>
+            ) BASE
+            CROSS JOIN (
+                SELECT DETAIL_CODE_VALUE, SORTING_SQ
+                FROM CM_CODE_DETAIL
+                WHERE CODE_ID = 'CMMNCODE.100'
+                <if test="cmpnyCd != null and cmpnyCd != ''">
+                AND CMPNY_CD = #{cmpnyCd}
+                </if>
+                 AND USE_FL = 'Y'
+            ) B
+            LEFT JOIN CM_MESSAGE_LANG M
+                ON M.LANG_GB = BASE.LANG_GB
+                AND M.LANG_KEY = BASE.LANG_KEY
+                AND M.CMPNY_CD = BASE.CMPNY_CD
+                AND M.LANG_CODE = B.DETAIL_CODE_VALUE
+            GROUP BY
+                BASE.CMPNY_CD,
+                BASE.LANG_GB,
+                BASE.LANG_KEY
+        ) A
+        WHERE 1=1
+        <if test="category != null and category != ''">
+            AND LANG_GB = #{category}
+        </if>
+        <if test="searchCondition != null and searchCondition != ''">
+            AND (
+                LANG_KEY LIKE CONCAT('%', #{searchCondition}, '%')
+                OR MESSAGE_CNS LIKE CONCAT('%', #{searchCondition}, '%')
+            )
+        </if>
+    </select>
+
+    <!-- 메시지 상세 조회  -->
+    <select id="selectMessageDetail" parameterType="map" resultType="tvframework.sym.msg.dto.CmmnMessageDetailResponseDTO">
+        SELECT 
+            M.LANG_GB AS langGb,
+            M.LANG_KEY AS langKey
+        FROM CM_MESSAGE_LANG M
+        WHERE 1 = 1
+        <if test="cmpnyCd != null and cmpnyCd != ''">
+        AND M.CMPNY_CD = #{cmpnyCd}
+        </if>
+        AND M.LANG_GB  = #{langGb}
+        AND M.LANG_KEY = #{langKey}
+        LIMIT 1
+    </select>
+
+    <!-- 메시지 상세 조회 (언어 목록 가변: CMMNCODE.100 기준, 메시지 리스트와 동일) -->
+    <select id="selectMessageDetailMessages" parameterType="map" resultType="tvframework.sym.msg.dto.MessageDetailDTO">
+        SELECT 
+            CD.DETAIL_CODE_VALUE AS langCode,
+            IFNULL(B.MESSAGE_CN, CD.DETAIL_CODE_VALUE) AS langName,
+            M.MESSAGE_CN AS messageCn
+        FROM CM_CODE_DETAIL CD
+        LEFT JOIN CM_MESSAGE_LANG B
+            ON B.LANG_KEY = CD.CODE_LANG_KEY
+           AND B.CMPNY_CD = CD.CMPNY_CD
+           AND B.LANG_CODE = #{langGb}
+        LEFT JOIN CM_MESSAGE_LANG M
+            ON 1 = 1
+            AND M.LANG_CODE = CD.DETAIL_CODE_VALUE
+           <if test="cmpnyCd != null and cmpnyCd != ''">
+           AND M.CMPNY_CD = #{cmpnyCd}
+           </if>
+           AND M.LANG_GB = #{langGb}
+           AND M.LANG_KEY = #{langKey}
+        WHERE CD.CODE_ID = 'CMMNCODE.100'
+          <if test="cmpnyCd != null and cmpnyCd != ''">
+          AND CD.CMPNY_CD = #{cmpnyCd}
+          </if>
+           AND CD.USE_FL = 'Y'
+        ORDER BY CD.SORTING_SQ ASC
+    </select>
+
+    <!-- UI 번역 일괄 조회 (LANG_KEY IN (...), LANG_CODE 기준, 키당 최신 CREATION_DT 1건) -->
+    <select id="selectMessageTextsByKeys" parameterType="map" resultType="tvframework.sym.msg.dto.CmmnMessageTextRowDTO">
+        SELECT M.LANG_KEY AS langKey, M.MESSAGE_CN AS messageCn
+        FROM CM_MESSAGE_LANG M
+        INNER JOIN (
+            SELECT LANG_KEY, MAX(CREATION_DT) AS max_dt
+            FROM CM_MESSAGE_LANG
+            WHERE LANG_CODE = #{langCode}
+            <if test="cmpnyCd != null and cmpnyCd != ''">
+              AND CMPNY_CD = #{cmpnyCd}
+            </if>
+            AND LANG_KEY IN
+            <foreach collection="langKeys" item="k" open="(" separator="," close=")">
+              #{k}
+            </foreach>
+            GROUP BY LANG_KEY
+        ) T ON M.LANG_KEY = T.LANG_KEY AND M.CREATION_DT = T.max_dt
+        WHERE M.LANG_CODE = #{langCode}
+        <if test="cmpnyCd != null and cmpnyCd != ''">
+          AND M.CMPNY_CD = #{cmpnyCd}
+        </if>
+    </select>
+
+    <!-- 메시지 등록 -->
+    <insert id="insertMessage" parameterType="map">
+        INSERT INTO CM_MESSAGE_LANG (
+           CMPNY_CD,
+            LANG_GB,
+            LANG_KEY,
+            LANG_CODE,
+            MESSAGE_CN,
+            CREATION_ID,
+            CREATION_DT
+        ) VALUES (
+            #{cmpnyCd},
+            #{langGb},
+            #{langKey},
+            #{langCode},
+            #{messageCn},
+            #{creationId},
+            NOW()
+        )
+    </insert>
+
+    <!-- 메시지 삭제 (langKey 기준, 회사코드 반영, 미전달 시 조건 생략) -->
+    <delete id="deleteMessageByLangKey" parameterType="map">
+        DELETE FROM CM_MESSAGE_LANG
+        WHERE 1 = 1
+        AND CMPNY_CD = #{cmpnyCd}
+        AND LANG_GB  = #{langGb}
+        AND LANG_KEY = #{langKey}
+    </delete>
+
+</mapper>

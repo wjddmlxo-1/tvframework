@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" 
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="loginDAO">
+	<!-- 로그인 처리용 resultMap -->
+	<resultMap id="login" type="tvframework.com.cmm.LoginVO">
+		<result property="id" column="ID"/>
+		<result property="name" column="NAME"/>
+		<result property="ihidNum" column="IHID_NUM"/>
+		<result property="email" column="EMAIL"/>
+		<result property="password" column="PASSWORD"/>
+		<result property="userSe" column="USER_SE"/>
+		<result property="orgnztId" column="ORGNZT_ID"/>
+		<result property="uniqId" column="UNIQ_ID"/>
+		<result property="groupId" column="GROUP_ID"/>
+		<result property="groupNm" column="GROUP_NM"/>
+	</resultMap>
+
+	<!-- 일반 로그인 -->
+	<select id="actionLogin" resultMap="login">
+		SELECT U.USER_ID 		AS ID
+		     , U.USER_NM 		AS NAME
+		     , U.PASSWORD 		AS PASSWORD
+		     , U.IHIDNUM 		AS IHID_NUM
+		     , U.EMAIL_ADRES 	AS EMAIL
+		     , 'ADM' 			AS USER_SE
+		     , '-' 				AS ORGNZT_ID
+		     , U.USER_ID 		AS UNIQ_ID
+		     , 'ROLE_ADMIN'  	AS GROUP_ID
+		     , 'ROLE_ADMIN'     AS GROUP_NM
+		  FROM CM_USER U
+		 WHERE U.USER_ID = #{id}
+		   AND U.PASSWORD = #{password}
+		   AND IFNULL(U.SBSCRB_STTUS, 'P') = 'P'
+	</select>
+
+	<!-- 로그인 가능 아이디 존재 여부 -->
+	<select id="existsLoginId" parameterType="string" resultType="int">
+		SELECT COUNT(1)
+		  FROM CM_USER
+		 WHERE USER_ID = #{id}
+		   AND IFNULL(SBSCRB_STTUS, 'P') = 'P'
+	</select>
+	
+</mapper>

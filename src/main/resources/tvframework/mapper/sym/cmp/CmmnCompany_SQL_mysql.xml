@@ -1,0 +1,172 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="CmmnCompanyMapper">
+
+    <!-- 공통코드 옵션 조회 (CodeOptionDTO: code, name=MESSAGE_CN) -->
+    <select id="selectCodeOptionByCodeId" parameterType="map" resultType="tvframework.sym.cmm.dto.CodeOptionDTO">
+        SELECT
+            A.DETAIL_CODE_VALUE  AS code
+          , B.MESSAGE_CN         AS name
+          FROM CM_CODE_DETAIL A
+         INNER JOIN CM_MESSAGE_LANG B ON B.LANG_KEY = A.CODE_LANG_KEY AND B.CMPNY_CD = A.CMPNY_CD
+         WHERE A.CODE_ID = #{codeId}
+           AND A.USE_FL = 'Y'
+           AND A.CMPNY_CD = 'CMMN'
+           AND B.LANG_CODE = #{languageCode}
+         ORDER BY A.SORTING_SQ ASC
+    </select>
+
+    <!-- 기업회원 목록조회 (화면설계서 쿼리 반영) -->
+    <select id="selectCompanyList" parameterType="map" resultType="tvframework.sym.cmp.dto.CmmnCompanyDTO">
+        SELECT A.CMPNY_CD      AS cmpnyCd
+             , A.CMPNY_NM      AS cmpnyNm
+             , A.APPLCNT_NM    AS applcntNm
+             , A.APPLCNT_EMAIL AS applcntEmail
+             , A.OFFM_TELNO    AS offmTelno
+             , A.EXPRTN_YMD    AS exprtnYmd
+             , DATE_FORMAT(A.CREATION_DT, '%Y-%m-%d') AS creationDt
+             , C.MESSAGE_CN    AS sbscrbSttusNm
+             , A.SBSCRB_STTUS  AS sbscrbSttus
+          FROM CM_CMPNY A
+          LEFT JOIN CM_CODE_DETAIL B
+                 ON B.CODE_ID = 'CMMNCODE.540'
+                AND B.CMPNY_CD = 'CMMN'
+                AND B.DETAIL_CODE_VALUE = A.SBSCRB_STTUS
+          LEFT JOIN CM_MESSAGE_LANG C
+                 ON C.LANG_KEY = B.CODE_LANG_KEY
+                AND C.CMPNY_CD = B.CMPNY_CD
+                AND C.LANG_CODE = #{languageCode}
+         WHERE 1=1
+        <if test="sbscrbSttus != null and sbscrbSttus != ''">
+            AND A.SBSCRB_STTUS = #{sbscrbSttus}
+        </if>
+        <if test="searchKeyword != null and searchKeyword != ''">
+            AND CONCAT(IFNULL(A.CMPNY_CD,''), IFNULL(A.CMPNY_NM,'')) LIKE CONCAT('%', #{searchKeyword}, '%')
+        </if>
+         ORDER BY A.CREATION_DT DESC
+         LIMIT #{recordCountPerPage} OFFSET #{offset}
+    </select>
+
+    <select id="selectCompanyListTotCnt" parameterType="map" resultType="int">
+        SELECT COUNT(*)
+          FROM CM_CMPNY A
+         WHERE 1=1
+        <if test="sbscrbSttus != null and sbscrbSttus != ''">
+            AND A.SBSCRB_STTUS = #{sbscrbSttus}
+        </if>
+        <if test="searchKeyword != null and searchKeyword != ''">
+            AND CONCAT(IFNULL(A.CMPNY_CD,''), IFNULL(A.CMPNY_NM,'')) LIKE CONCAT('%', #{searchKeyword}, '%')
+        </if>
+    </select>
+
+    <!-- 회사 상세 조회 -->
+    <select id="selectCompanyDetail" parameterType="map" resultType="tvframework.sym.cmp.dto.CmmnCompanyDTO">
+        SELECT A.CMPNY_CD      AS cmpnyCd
+             , A.CMPNY_NM      AS cmpnyNm
+             , A.ENTRPRS_GB    AS entrprsGb
+             , A.BSNS_NO       AS bsnsNo
+             , A.CPR_NO        AS cprNo
+             , A.CXFC          AS cxfc
+             , A.NATION_CD     AS nationCd
+             , A.ZIP_CD        AS zipCd
+             , A.ADRES_ONE     AS adresOne
+             , A.ADRES_TWO     AS adresTwo
+             , A.CITY_NM       AS cityNm
+             , A.STATE_NM      AS stateNm
+             , A.OFFM_TELNO    AS offmTelno
+             , A.FXNUM         AS fxnum
+             , A.INDUTY_CD     AS indutyCd
+             , A.SBSCRB_DT     AS sbscrbDt
+             , A.SBSCRB_STTUS  AS sbscrbSttus
+             , A.EXPRTN_YMD    AS exprtnYmd
+             , A.APPLCNT_ID    AS applcntId
+             , A.APPLCNT_NM    AS applcntNm
+             , A.APPLCNT_EMAIL AS applcntEmail
+             , A.USE_FL        AS useFl
+             , DATE_FORMAT(A.CREATION_DT, '%Y-%m-%d %H:%i') AS creationDt
+             , DATE_FORMAT(A.UPDATE_DT, '%Y-%m-%d %H:%i')   AS updateDt
+          FROM CM_CMPNY A
+         WHERE A.CMPNY_CD = #{cmpnyCd}
+    </select>
+
+    <!-- 중복 아이디 검색 (화면설계서: CM_CMPNY + CM_USER) -->
+    <select id="checkDuplicateCmpnyCd" parameterType="map" resultType="string">
+        SELECT CASE WHEN COUNT(BASE.ID) = 0 THEN 'O' ELSE 'X' END
+          FROM (
+            SELECT CMPNY_CD AS ID FROM CM_CMPNY WHERE UPPER(CMPNY_CD) = UPPER(#{cmpnyCd})
+            UNION
+            SELECT USER_ID AS ID FROM CM_USER WHERE UPPER(USER_ID) = UPPER(#{cmpnyCd})
+        ) BASE
+    </select>
+
+    <!-- 회원가입 약관 조회 (CMMNCODE.550의 첫 코드값에 매핑된 약관ID) -->
+    <select id="selectJoinStplat" parameterType="map" resultType="map">
+        SELECT IFNULL(S.USE_STPLAT_CN, '')      AS useStplatCn
+             , IFNULL(S.INFO_PROVD_AGRE_CN, '') AS infoProvdAgreCn
+          FROM CM_STPLAT S
+         WHERE S.USE_STPLAT_ID = (
+            SELECT CAST(A.DETAIL_CODE_ID AS UNSIGNED)
+              FROM CM_CODE_DETAIL A
+             WHERE A.CODE_ID = 'CMMNCODE.550'
+               AND A.USE_FL = 'Y'
+               AND A.CMPNY_CD = 'CMMN'
+             ORDER BY A.SORTING_SQ ASC
+             LIMIT 1
+         )
+    </select>
+
+    <!-- 회사정보 저장 (등록) -->
+    <insert id="insertCompany" parameterType="map">
+        INSERT INTO CM_CMPNY (
+            CMPNY_CD, CMPNY_NM, ENTRPRS_GB, INDUTY_CD, CXFC, BSNS_NO, CPR_NO,
+            ADRES_ONE, ADRES_TWO, CITY_NM, STATE_NM, NATION_CD, ZIP_CD,
+            OFFM_TELNO, FXNUM, APPLCNT_ID, APPLCNT_NM, APPLCNT_EMAIL, SBSCRB_DT, EXPRTN_YMD, SBSCRB_STTUS,
+            USE_FL, CREATION_ID, CREATION_DT
+        ) VALUES (
+            #{cmpnyCd}, #{cmpnyNm}, #{entrprsGb}, #{indutyCd}, #{cxfc}, #{bsnsNo}, #{cprNo},
+            #{adresOne}, #{adresTwo}, #{cityNm}, #{stateNm}, #{nationCd}, #{zipCd},
+            #{offmTelno}, #{fxnum}, #{applcntId}, #{applcntNm}, #{applcntEmail}, NOW(), #{exprtnYmd}, #{sbscrbSttus},
+            IFNULL(#{useFl}, 'Y'), #{creationId}, NOW()
+        )
+    </insert>
+
+    <!-- 회사 수정 (화면설계서: EXPRTN_YMD, SBSCRB_DT, USE_FL CASE 처리) -->
+    <update id="updateCompany" parameterType="map">
+        UPDATE CM_CMPNY
+           SET CMPNY_NM      = #{cmpnyNm},
+               ENTRPRS_GB    = #{entrprsGb},
+               INDUTY_CD     = #{indutyCd},
+               CXFC          = #{cxfc},
+               BSNS_NO       = #{bsnsNo},
+               CPR_NO        = #{cprNo},
+               ADRES_ONE     = #{adresOne},
+               ADRES_TWO     = #{adresTwo},
+               CITY_NM       = #{cityNm},
+               STATE_NM      = #{stateNm},
+               NATION_CD     = #{nationCd},
+               ZIP_CD        = #{zipCd},
+               OFFM_TELNO    = #{offmTelno},
+               FXNUM         = #{fxnum},
+               APPLCNT_NM    = #{applcntNm},
+               APPLCNT_EMAIL = #{applcntEmail},
+               EXPRTN_YMD    = CASE WHEN #{sbscrbSttus} = 'D' THEN DATE_FORMAT(NOW(), '%Y%m%d') ELSE #{exprtnYmd} END,
+               SBSCRB_DT     = CASE WHEN #{sbscrbSttus} = 'A' THEN NOW() ELSE SBSCRB_DT END,
+               SBSCRB_STTUS  = #{sbscrbSttus},
+               USE_FL        = CASE WHEN #{sbscrbSttus} = 'D' THEN 'N' ELSE IFNULL(#{useFl}, USE_FL) END,
+               UPDATE_ID     = #{updateId},
+               UPDATE_DT     = NOW()
+         WHERE CMPNY_CD = #{cmpnyCd}
+    </update>
+
+    <!-- 삭제(상태만 'D', USE_FL 'N' 처리) -->
+    <update id="deleteCompany" parameterType="map">
+        UPDATE CM_CMPNY
+           SET SBSCRB_STTUS = 'D',
+               USE_FL       = 'N',
+               EXPRTN_YMD   = DATE_FORMAT(NOW(), '%Y%m%d'),
+               UPDATE_ID    = #{updateId},
+               UPDATE_DT    = NOW()
+         WHERE CMPNY_CD = #{cmpnyCd}
+    </update>
+</mapper>

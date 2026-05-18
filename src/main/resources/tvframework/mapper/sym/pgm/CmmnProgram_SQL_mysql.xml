@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="CmmnProgramMapper">
+
+    <!-- 프로그램 목록 조회 (다국어관리와 동일 패턴: resultType + AS alias) -->
+    <select id="selectProgramList" parameterType="map" resultType="tvframework.sym.pgm.dto.CmmnProgramDTO">
+        SELECT
+            P.CMPNY_CD       AS cmpnyCd,
+            P.PROGRM_FILE_NM AS progrmFileNm,
+            P.PROGRM_NM_CODE AS progrmNmCode,
+            M.MESSAGE_CN     AS message_cn,
+            P.PROGRM_URL     AS progrmUrl,
+            P.PROGRM_DC      AS progrmDc,
+            P.USE_FL         AS useFl,
+            P.CREATION_ID    AS creationId,
+            P.CREATION_DT    AS creationDt,
+            P.UPDATE_ID      AS updateId,
+            P.UPDATE_DT      AS updateDt
+        FROM CM_PROGRM P
+        LEFT JOIN (
+            SELECT LANG_KEY, MESSAGE_CN
+            FROM CM_MESSAGE_LANG
+            WHERE CMPNY_CD = #{cmpnyCd}
+              AND LANG_CODE = #{langCode}
+        ) M ON M.LANG_KEY = P.PROGRM_NM_CODE
+         WHERE P.CMPNY_CD = #{cmpnyCd}
+         <if test="searchKeyword != null and searchKeyword != ''">
+                  AND (
+                        M.MESSAGE_CN LIKE CONCAT('%', #{searchKeyword}, '%')
+                        OR P.PROGRM_URL   LIKE CONCAT('%', #{searchKeyword}, '%')
+                    )
+        </if>
+        ORDER BY P.CREATION_DT DESC
+        LIMIT #{recordCountPerPage} OFFSET #{offset}
+    </select>
+
+    <!-- 프로그램 목록 총 건수 -->
+    <select id="selectProgramListTotCnt" parameterType="map" resultType="int">
+        SELECT COUNT(*)
+        FROM CM_PROGRM P
+        LEFT JOIN (
+            SELECT LANG_KEY, MESSAGE_CN
+            FROM CM_MESSAGE_LANG
+            WHERE CMPNY_CD = #{cmpnyCd}
+              AND LANG_CODE = #{langCode}
+        ) M ON M.LANG_KEY = P.PROGRM_NM_CODE
+        WHERE P.CMPNY_CD = #{cmpnyCd}
+         <if test="searchKeyword != null and searchKeyword != ''">
+                 AND (
+                        M.MESSAGE_CN      LIKE CONCAT('%', #{searchKeyword}, '%')
+                        OR P.PROGRM_URL   LIKE CONCAT('%', #{searchKeyword}, '%')
+                    )
+        </if>
+    </select>
+
+    <!-- 프로그램 상세 조회 (CM_MESSAGE_LANG 조인으로 프로그램명 MESSAGE_CN 표시, PROGRM_NM_CODE는 코드값) -->
+    <select id="selectProgramDetail" parameterType="map" resultType="tvframework.sym.pgm.dto.CmmnProgramDTO">
+        SELECT
+            P.CMPNY_CD        AS cmpnyCd,
+            P.PROGRM_FILE_NM  AS progrmFileNm,
+            P.PROGRM_STRE_PATH AS progrmStrePath,
+            P.PROGRM_NM_CODE  AS progrmNmCode,
+            M.MESSAGE_CN      AS message_cn,
+            P.PROGRM_URL      AS progrmUrl,
+            P.PROGRM_DC       AS progrmDc,
+            P.USE_FL          AS useFl,
+            P.CREATION_ID     AS creationId,
+            P.CREATION_DT    AS creationDt,
+            P.UPDATE_ID      AS updateId,
+            P.UPDATE_DT      AS updateDt
+        FROM CM_PROGRM P
+        LEFT JOIN (
+            SELECT LANG_KEY, MESSAGE_CN
+            FROM CM_MESSAGE_LANG
+            WHERE CMPNY_CD = #{cmpnyCd}
+              AND LANG_CODE = #{langCode}
+        ) M ON M.LANG_KEY = P.PROGRM_NM_CODE
+        WHERE P.CMPNY_CD       = #{cmpnyCd}
+          AND P.PROGRM_FILE_NM = #{progrmFileNm}
+    </select>
+
+    <!-- 프로그램 등록 -->
+    <insert id="insertProgram" parameterType="map">
+        INSERT INTO CM_PROGRM (
+            CMPNY_CD,
+            PROGRM_FILE_NM,
+            PROGRM_STRE_PATH,
+            PROGRM_NM_CODE,
+            PROGRM_URL,
+            PROGRM_DC,
+            USE_FL,
+            CREATION_ID,
+            CREATION_DT
+        ) VALUES (
+            #{cmpnyCd},
+            #{progrmFileNm},
+            IFNULL(#{progrmStrePath}, ''),
+            #{progrmNmCode},
+            #{progrmUrl},
+            #{progrmDc},
+            IFNULL(#{useFl}, 'Y'),
+            #{creationId},
+            NOW()
+        )
+    </insert>
+
+    <!-- 프로그램 수정 -->
+    <update id="updateProgram" parameterType="map">
+        UPDATE CM_PROGRM
+        SET
+            PROGRM_STRE_PATH = #{progrmStrePath},
+            PROGRM_NM_CODE   = #{progrmNmCode},
+            PROGRM_URL       = #{progrmUrl},
+            PROGRM_DC        = #{progrmDc},
+            USE_FL           = #{useFl},
+            UPDATE_ID        = #{updateId},
+            UPDATE_DT        = NOW()
+        WHERE CMPNY_CD       = #{cmpnyCd}
+          AND PROGRM_FILE_NM = #{progrmFileNm}
+    </update>
+
+    <!-- 프로그램 삭제 -->
+    <delete id="deleteProgram" parameterType="map">
+        DELETE FROM CM_PROGRM
+        WHERE CMPNY_CD       = #{cmpnyCd}
+          AND PROGRM_FILE_NM = #{progrmFileNm}
+    </delete>
+
+</mapper>

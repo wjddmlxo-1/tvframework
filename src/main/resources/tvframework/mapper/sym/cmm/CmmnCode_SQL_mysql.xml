@@ -1,0 +1,193 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" 
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="CmmnCodeMapper">
+    <!-- 언어 목록은 CmmnMessage_SQL_mysql.xml selectLanguages 단일 소스 사용 -->
+    <!-- 공통코드 조회 (Tree 구조) -->
+    <select id="selectCodeTree" parameterType="map" resultType="map">
+        WITH RECURSIVE CODE_HIERARCHY AS (
+            SELECT 
+                C.CMPNY_CD,
+                C.CODE_ID, 
+                C.UPPER_CODE_ID, 
+                C.USE_FL, 
+                C.CODE_LANG_KEY,
+                CAST(C.CODE_ID AS CHAR(5000)) AS PATH, 
+                1 AS `LEVEL`
+            FROM CM_CODE C
+            WHERE C.CMPNY_CD = #{cmpnyCd}
+              AND C.UPPER_CODE_ID = '#'
+            UNION ALL
+            SELECT 
+                C.CMPNY_CD,
+                C.CODE_ID, 
+                C.UPPER_CODE_ID, 
+                C.USE_FL, 
+                C.CODE_LANG_KEY,
+                CAST(CONCAT(CH.PATH, '>', C.CODE_ID) AS CHAR(5000)) AS PATH, 
+                CH.`LEVEL` + 1 AS `LEVEL`
+            FROM CM_CODE C
+            INNER JOIN CODE_HIERARCHY CH
+            ON C.CMPNY_CD = CH.CMPNY_CD
+               AND C.UPPER_CODE_ID = CH.CODE_ID
+        )
+        SELECT 
+            CH.CODE_ID AS codeId, 
+            IFNULL(B.MESSAGE_CN, CH.CODE_ID) AS name, 
+            CH.UPPER_CODE_ID AS upperCodeId, 
+            CH.USE_FL AS useFl, 
+            CH.PATH AS path, 
+            CH.`LEVEL` AS level
+        FROM CODE_HIERARCHY CH
+        LEFT JOIN CM_MESSAGE_LANG B 
+            ON B.CMPNY_CD = CH.CMPNY_CD
+            AND B.LANG_KEY = CH.CODE_LANG_KEY
+            AND B.LANG_CODE = #{langGb}
+        ORDER BY CH.PATH
+    </select>
+
+    <!-- 코드 정보 조회   -->
+    <select id="selectCodeDetail" parameterType="map" resultType="tvframework.sym.cmm.dto.CmmnCodeResponseDTO">
+        SELECT
+            C_UPPER.CODE_ID        AS upperCodeId,
+            M_UPPER.MESSAGE_CN     AS upperCodeName,
+            C.CODE_ID              AS codeId,
+            M.MESSAGE_CN           AS codeName,
+            C.USE_FL               AS useFl,
+            C.CODE_CN              AS codeCn,
+            M.LANG_KEY             AS codeLangKey
+        FROM CM_CODE C
+        LEFT JOIN CM_CODE C_UPPER 
+               ON C_UPPER.CMPNY_CD = C.CMPNY_CD
+              AND C_UPPER.CODE_ID = C.UPPER_CODE_ID
+        LEFT JOIN CM_MESSAGE_LANG M 
+               ON M.CMPNY_CD = C.CMPNY_CD
+              AND M.LANG_KEY = C.CODE_LANG_KEY
+              AND M.LANG_CODE = #{langGb}
+        LEFT JOIN CM_MESSAGE_LANG M_UPPER 
+               ON M_UPPER.CMPNY_CD = C_UPPER.CMPNY_CD
+              AND M_UPPER.LANG_KEY = C_UPPER.CODE_LANG_KEY
+              AND M_UPPER.LANG_CODE = #{langGb}
+        WHERE C.CMPNY_CD = #{cmpnyCd}
+          AND C.CODE_ID = #{codeId}
+    </select>
+
+    <!-- 코드 리스트 조회 쿼리  -->
+    <select id="selectCodeDetailList" parameterType="map" resultType="tvframework.sym.cmm.dto.CodeDetailDTO">
+        SELECT 
+            B.MESSAGE_CN AS codeName,
+            A.DETAIL_CODE_ID AS detailCodeId,
+            A.DETAIL_CODE_VALUE AS detailCodeValue,
+            A.USE_FL AS useFl,
+            A.SORTING_SQ AS sortingSq,
+            A.CODE_LANG_KEY AS codeLangKey
+        FROM CM_CODE_DETAIL A
+        LEFT JOIN CM_MESSAGE_LANG B 
+            ON B.CMPNY_CD = A.CMPNY_CD
+            AND B.LANG_KEY = A.CODE_LANG_KEY
+            AND B.LANG_CODE = #{langGb}
+        WHERE A.CMPNY_CD = #{cmpnyCd}
+          AND A.CODE_ID = #{codeId}
+        ORDER BY A.SORTING_SQ ASC
+    </select>
+
+    <!-- 상위 코드 정보 조회  -->
+    <select id="selectParentCode" parameterType="map" resultType="tvframework.sym.cmm.dto.CmmnCodeResponseDTO">
+        SELECT 
+            C.CODE_ID AS upperCodeId,
+            M.MESSAGE_CN AS upperCodeName
+        FROM CM_CODE C
+        LEFT JOIN CM_MESSAGE_LANG M 
+            ON M.CMPNY_CD = C.CMPNY_CD
+            AND M.LANG_KEY = C.CODE_LANG_KEY 
+            AND M.LANG_CODE = #{langGb}
+        WHERE C.CMPNY_CD = #{cmpnyCd}
+          AND C.CODE_ID = #{codeId}
+    </select>
+
+    <!-- 삭제여부 조회 쿼리 -->
+    <select id="checkChildren" parameterType="map" resultType="string">
+        SELECT 
+            CASE 
+                WHEN COUNT(*) > 0 THEN 'X' 
+                WHEN COUNT(*) = 0 THEN 'O' 
+            END AS result
+        FROM CM_CODE 
+        WHERE CMPNY_CD = #{cmpnyCd}
+          AND UPPER_CODE_ID = #{codeId}
+    </select>
+
+    <!-- 코드 정보 저장  -->
+    <insert id="insertCode" parameterType="map">
+        INSERT INTO CM_CODE (
+            CMPNY_CD,
+            CODE_ID, 
+            UPPER_CODE_ID, 
+            CODE_LANG_KEY, 
+            USE_FL, 
+            CODE_CN,
+            CREATION_ID,
+            CREATION_DT
+        ) VALUES (
+            #{cmpnyCd},
+            #{codeId}, 
+            #{upperCodeId}, 
+            #{codeLangKey}, 
+            #{useFl}, 
+            #{codeCn},
+            #{creationId},
+            NOW()
+        )
+    </insert>
+
+    <!-- 코드 리스트 저장  -->
+    <insert id="insertCodeDetail" parameterType="map">
+        INSERT INTO CM_CODE_DETAIL (
+            CMPNY_CD,
+            CODE_ID,
+            DETAIL_CODE_ID,
+            DETAIL_CODE_VALUE,
+            CODE_LANG_KEY,
+            SORTING_SQ,
+            USE_FL,
+            CREATION_ID,
+            CREATION_DT
+        ) VALUES (
+            #{cmpnyCd},
+            #{codeId},
+            #{detailCodeId},
+            #{detailCodeValue},
+            #{codeLangKey},
+            #{sortingSq},
+            #{useFl},
+            #{creationId},
+            NOW()
+        )
+    </insert>
+
+    <!-- 코드 정보 수정  -->
+    <update id="updateCode" parameterType="map">
+        UPDATE CM_CODE 
+        SET USE_FL = #{useFl},
+            CODE_CN = #{codeCn},
+            CODE_LANG_KEY = #{codeLangKey},
+            UPDATE_ID = #{updateId},
+            UPDATE_DT = NOW()
+        WHERE CMPNY_CD = #{cmpnyCd}
+          AND CODE_ID = #{codeId}
+    </update>
+
+    <!-- 코드 정보 삭제 -->
+    <delete id="deleteCode" parameterType="map">
+        DELETE FROM CM_CODE 
+        WHERE CMPNY_CD = #{cmpnyCd}
+          AND CODE_ID = #{codeId}
+    </delete>
+
+    <!-- 코드 리스트 삭제 -->
+    <delete id="deleteCodeDetail" parameterType="map">
+        DELETE FROM CM_CODE_DETAIL 
+        WHERE CMPNY_CD = #{cmpnyCd}
+          AND CODE_ID = #{codeId}
+    </delete>
+</mapper>

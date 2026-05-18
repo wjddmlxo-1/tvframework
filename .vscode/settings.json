@@ -1,0 +1,17 @@
+{
+  "java.compile.nullAnalysis.mode": "automatic",
+  "terminal.integrated.profiles.windows": {
+    "Command Prompt (UTF-8)": {
+      "path": "C:\\Windows\\System32\\cmd.exe",
+      "args": ["/K", "chcp 65001 >nul"]
+    },
+    "PowerShell (UTF-8)": {
+      "source": "PowerShell",
+      "args": ["-NoExit", "-Command", "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; chcp 65001 | Out-Null"]
+    }
+  },
+  "terminal.integrated.defaultProfile.windows": "Command Prompt (UTF-8)",
+  "terminal.integrated.env.windows": {
+    "JAVA_TOOL_OPTIONS": "-Dfile.encoding=UTF-8"
+  }
+}

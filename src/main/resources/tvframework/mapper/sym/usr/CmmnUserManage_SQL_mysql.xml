@@ -1,0 +1,453 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="tvframework.sym.usr.service.impl.CmmnUserManageMapper">
+
+    <!-- 회사 사용자 리스트 조회 -->
+    <select id="selectCompanyUserList" parameterType="map" resultType="tvframework.sym.usr.dto.CmmnUserManageListDTO">
+        SELECT BASE.MBRSH_SQ AS mbrshSq
+             , BASE.USER_ID AS userId
+             , BASE.USER_NM AS userNm
+             , D.MESSAGE_CN AS deptNm
+             , (SELECT B.MESSAGE_CN
+                  FROM CM_CODE_DETAIL A
+                 INNER JOIN CM_MESSAGE_LANG B
+                    ON B.LANG_KEY = A.CODE_LANG_KEY
+                   AND B.CMPNY_CD = A.CMPNY_CD
+                 WHERE A.CODE_ID = 'CMMNCODE.560'
+                   AND A.USE_FL = 'Y'
+                   AND A.CMPNY_CD = BASE.CMPNY_CD
+                   AND A.DETAIL_CODE_ID = BASE.OFCPS_NM_KEY
+                   AND B.LANG_CODE = #{languageCode}
+               ) AS ofcpsNm
+          FROM (
+            SELECT A.MBRSH_SQ
+                 , A.USER_ID
+                 , CASE WHEN #{languageCode} = 'en_US' THEN B.USER_ENG_NM ELSE B.USER_NM END AS USER_NM
+                 , C.DEPT_NM_KEY
+                 , A.CMPNY_CD
+                 , A.OFCPS_NM_KEY
+              FROM CM_USER_ORGNZT_MBRSH A
+             INNER JOIN CM_USER B ON A.USER_ID = B.USER_ID
+             LEFT JOIN CM_DEPT C ON A.DEPT_CD = C.DEPT_CD AND A.CMPNY_CD = C.CMPNY_CD
+             WHERE A.CMPNY_CD = #{companyCode} AND A.USE_FL = 'Y'
+          ) BASE
+         LEFT JOIN CM_MESSAGE_LANG D
+            ON D.LANG_KEY = BASE.DEPT_NM_KEY
+           AND D.CMPNY_CD = BASE.CMPNY_CD
+           AND D.LANG_CODE = #{languageCode}
+         <where>
+             <if test="searchKeyword != null and searchKeyword != ''">
+                 AND CONCAT(BASE.USER_ID, BASE.USER_NM) LIKE CONCAT('%', #{searchKeyword}, '%')
+             </if>
+         </where>
+         ORDER BY BASE.USER_NM
+    </select>
+
+    <!-- 사용자 기본정보 조회 (CM_USER) — 생일·성별은 화면/JSON 직렬화 안정화 -->
+    <select id="selectUserByUserId" parameterType="map" resultType="tvframework.sym.usr.dto.CmmnUserDTO">
+       SELECT USER_ID AS userId
+            , USER_NM AS userNm
+            , USER_ENG_NM AS userEngNm
+            , NULLIF(TRIM(GENDER_CD), '') AS genderCd
+            , CASE
+                WHEN BRTHDY IS NULL OR TRIM(CAST(BRTHDY AS CHAR)) = '' THEN NULL
+                WHEN TRIM(CAST(BRTHDY AS CHAR)) REGEXP '^[0-9]{8}$' THEN TRIM(CAST(BRTHDY AS CHAR))
+                ELSE DATE_FORMAT(BRTHDY, '%Y%m%d')
+              END AS brthdy
+            , ZIP_CD AS zipCd
+            , ADRES_ONE AS adresOne
+            , ADRES_TWO AS adresTwo
+            , CITY_NM AS cityNm
+            , STATE_NM AS stateNm
+            , NATION_CD AS nationCd
+            , HOUSE_TELNO AS houseTelno
+            , MBTLNUM AS mbtlnum
+            , FXNUM AS fxnum
+            , PASSWORD_HINT AS passwordHint
+            , PASSWORD_CNSR AS passwordCnsr
+            , EMAIL_ADRES AS emailAdres
+            , USER_TYPE AS userType
+            , SBSCRB_STTUS AS userSttusCd
+            , CAST(FILE_SQ AS CHAR) AS profileFileSq
+          FROM CM_USER
+         WHERE USER_ID = #{userId}
+    </select>
+
+    <!-- 회사별 사용자 정보 조회 (CM_USER_ORGNZT_MBRSH + 부서명) -->
+    <select id="selectUserCompanyInfoList" parameterType="map" resultType="tvframework.sym.usr.dto.CmmnUserCompanyInfoDTO">
+        SELECT BASE.EMPL_NO AS emplNo
+            , BASE.OFCPS_NM_KEY AS ofcpsCd
+            , BASE.OFFM_TELNO AS offmTelno
+            , BASE.EMAIL_ADRES AS emailAdres
+            , BASE.ECNY_YMD AS ecnyYmd
+            , BASE.RETIRE_YMD AS retireYmd
+            , BASE.DEPT_CD AS deptCd
+            , C.MESSAGE_CN AS deptNm
+          FROM (
+           SELECT A.EMPL_NO
+                , A.OFCPS_NM_KEY
+                , A.OFFM_TELNO
+                , A.EMAIL_ADRES
+                , A.ECNY_YMD
+                , A.RETIRE_YMD
+                , A.DEPT_CD
+                , A.CMPNY_CD
+                , B.DEPT_NM_KEY
+              FROM CM_USER_ORGNZT_MBRSH A
+             LEFT JOIN CM_DEPT B ON A.DEPT_CD = B.DEPT_CD AND A.CMPNY_CD = B.CMPNY_CD
+             WHERE A.USER_ID = #{userId} AND A.CMPNY_CD = #{companyCode} AND A.USE_FL = 'Y'
+          ) BASE
+         LEFT JOIN CM_MESSAGE_LANG C ON C.LANG_KEY = BASE.DEPT_NM_KEY AND C.CMPNY_CD = BASE.CMPNY_CD AND C.LANG_CODE = #{languageCode}
+    </select>
+
+    <!-- 사용자 소속 회사 코드 목록 (USE_FL=Y, 정렬) — 마이프로필 등 -->
+    <select id="selectUserCompanyCodes" parameterType="map" resultType="string">
+        SELECT DISTINCT A.CMPNY_CD
+          FROM CM_USER_ORGNZT_MBRSH A
+         WHERE A.USER_ID = #{userId} AND A.USE_FL = 'Y'
+         ORDER BY A.CMPNY_CD
+    </select>
+
+    <!-- 사용자 전체 소속(회사별) 정보 — CM_USER_ORGNZT_MBRSH 전 행 (마이프로필) -->
+    <select id="selectUserCompanyInfoAllByUserId" parameterType="map" resultType="tvframework.sym.usr.dto.CmmnUserCompanyInfoDTO">
+        SELECT A.MBRSH_SQ AS mbrshSq
+             , A.CMPNY_CD AS companyCode
+             , COALESCE(CO.CMPNY_NM, A.CMPNY_CD) AS companyNm
+             , A.EMPL_NO AS emplNo
+             , A.OFCPS_NM_KEY AS ofcpsCd
+             , A.OFFM_TELNO AS offmTelno
+             , A.EMAIL_ADRES AS emailAdres
+             , NULLIF(TRIM(CAST(A.ECNY_YMD AS CHAR)), '') AS ecnyYmd
+             , NULLIF(TRIM(CAST(A.RETIRE_YMD AS CHAR)), '') AS retireYmd
+             , A.DEPT_CD AS deptCd
+             , D.MESSAGE_CN AS deptNm
+          FROM CM_USER_ORGNZT_MBRSH A
+          LEFT JOIN CM_CMPNY CO ON CO.CMPNY_CD = A.CMPNY_CD
+          LEFT JOIN CM_DEPT B ON A.DEPT_CD = B.DEPT_CD AND A.CMPNY_CD = B.CMPNY_CD
+          LEFT JOIN CM_MESSAGE_LANG D ON D.LANG_KEY = B.DEPT_NM_KEY AND D.CMPNY_CD = B.CMPNY_CD AND D.LANG_CODE = #{languageCode}
+         WHERE A.USER_ID = #{userId} AND A.USE_FL = 'Y'
+         ORDER BY A.CMPNY_CD
+    </select>
+
+    <!-- MBRSH_SQ 가 해당 USER_ID 소속인지 (마이프로필 저장 검증) -->
+    <select id="countMbrshByUserAndSq" parameterType="map" resultType="int">
+        SELECT COUNT(1)
+          FROM CM_USER_ORGNZT_MBRSH
+         WHERE MBRSH_SQ = #{mbrshSq} AND USER_ID = #{userId} AND USE_FL = 'Y'
+    </select>
+
+    <!-- 구성원 행 현재값 (마이프로필: 변경분만 UPDATE 비교용) -->
+    <select id="selectUserOrgnztMbrshByMbrshSq" parameterType="map" resultType="map">
+        SELECT A.DEPT_CD AS deptCd
+             , A.EMPL_NO AS emplNo
+             , A.OFFM_TELNO AS offmTelno
+             , A.EMAIL_ADRES AS emailAdres
+             , A.OFCPS_NM_KEY AS ofcpsCd
+             , NULLIF(TRIM(CAST(A.ECNY_YMD AS CHAR)), '') AS ecnyYmd
+             , NULLIF(TRIM(CAST(A.RETIRE_YMD AS CHAR)), '') AS retireYmd
+          FROM CM_USER_ORGNZT_MBRSH A
+         WHERE A.MBRSH_SQ = #{mbrshSq} AND A.USER_ID = #{userId} AND A.USE_FL = 'Y'
+    </select>
+
+    <!-- 코드 옵션 (비밀번호힌트 CMMNCODE.530, 성별 CMMNCODE.570, 직위 CMMNCODE.560, 부서등급 CMMNCODE.571) -->
+    <select id="selectCodeOptionByCodeId" parameterType="map" resultType="tvframework.sym.usr.dto.CodeOptionItemDTO">
+        SELECT  A.DETAIL_CODE_ID AS langSectionCode
+              , B.MESSAGE_CN     AS langSectionName
+          FROM CM_CODE_DETAIL A
+         INNER JOIN CM_MESSAGE_LANG B ON B.LANG_KEY = A.CODE_LANG_KEY AND B.CMPNY_CD = A.CMPNY_CD
+         WHERE A.CODE_ID = #{codeId} AND A.USE_FL = 'Y' AND A.CMPNY_CD = #{companyCode} AND B.LANG_CODE = #{languageCode}
+         ORDER BY A.SORTING_SQ ASC
+    </select>
+	
+	<!-- 회사별 구성원 MBRSH_SQ 조회 -->
+    <select id="selectMbrshSqByUserAndCompany" parameterType="map" resultType="java.lang.Long">
+        SELECT MBRSH_SQ FROM CM_USER_ORGNZT_MBRSH
+         WHERE USER_ID = #{userId} AND CMPNY_CD = #{companyCode} AND USE_FL = 'Y'
+    </select>
+
+	<!-- 부서 상세 조회 (DPRLR_ID = MBRSH_SQ 로 부서장명 조회) -->
+    <select id="selectDeptDetail" parameterType="map" resultType="tvframework.sym.usr.dto.CmmnDeptManageDTO">
+        SELECT   BASE.CMPNY_CD AS cmpnyCd
+               , BASE.DEPT_CD AS deptCd
+               , BASE.DEPT_NM_KEY AS deptNmKey
+               , B.MESSAGE_CN AS deptNm
+               , BASE.UPPER_DEPT_CD AS upperDeptCd
+               , BASE.UPPER_DEPT_NM_KEY AS upperDeptNmKey
+               , UB.MESSAGE_CN AS upperDeptNm
+               , BASE.DEPT_GRAD_CD AS deptGradCd
+               , BASE.DPRLR_ID AS dprlrId
+               , (SELECT M.USER_ID FROM CM_USER_ORGNZT_MBRSH M
+                   WHERE M.CMPNY_CD = BASE.CMPNY_CD AND M.MBRSH_SQ = BASE.DPRLR_ID LIMIT 1) AS dprlrUserId
+               , (SELECT CASE WHEN #{languageCode} = 'en_US' THEN U.USER_ENG_NM ELSE U.USER_NM END
+                    FROM CM_USER_ORGNZT_MBRSH M INNER JOIN CM_USER U ON U.USER_ID = M.USER_ID
+                   WHERE M.MBRSH_SQ = BASE.DPRLR_ID) AS dprlrNm
+                , BASE.EXPRTN_YMD AS exprtnYmd
+                , BASE.USE_FL AS useFl
+                , BASE.SORT_ORD AS sortOrd
+          FROM (
+            SELECT    C.CMPNY_CD
+                    , C.DEPT_CD
+                    , C.DEPT_NM_KEY
+                    , C.UPPER_DEPT_CD
+                    , UC.DEPT_NM_KEY AS UPPER_DEPT_NM_KEY
+                    , C.DEPT_GRAD_CD, C.DPRLR_ID
+                    , C.EXPRTN_YMD
+                    , C.USE_FL, C.SORT_ORD
+              FROM CM_DEPT C
+             LEFT JOIN CM_DEPT UC ON UC.CMPNY_CD = C.CMPNY_CD AND UC.DEPT_CD = C.UPPER_DEPT_CD
+             WHERE C.CMPNY_CD = #{companyCode} AND C.DEPT_CD = #{deptCd}
+          ) BASE
+         LEFT JOIN CM_MESSAGE_LANG B ON B.LANG_KEY = BASE.DEPT_NM_KEY AND B.CMPNY_CD = BASE.CMPNY_CD AND B.LANG_CODE = #{languageCode}
+         LEFT JOIN CM_MESSAGE_LANG UB ON UB.LANG_KEY = BASE.UPPER_DEPT_NM_KEY AND UB.CMPNY_CD = BASE.CMPNY_CD AND UB.LANG_CODE = #{languageCode}
+    </select>
+	
+    <!-- 부서 하위부서 수 (사용중 Y) -->
+    <select id="countDeptChildren" parameterType="map" resultType="int">
+        SELECT COUNT(1)
+          FROM CM_DEPT
+         WHERE CMPNY_CD = #{companyCode}
+           AND UPPER_DEPT_CD = #{deptCd}
+           AND USE_FL = 'Y'
+    </select>
+
+    <!-- 부서 소속 사용자 수 (사용중 Y) -->
+    <select id="countDeptUsers" parameterType="map" resultType="int">
+        SELECT COUNT(1)
+          FROM CM_USER_ORGNZT_MBRSH
+         WHERE CMPNY_CD = #{companyCode}
+           AND DEPT_CD = #{deptCd}
+           AND USE_FL = 'Y'
+    </select>
+	
+	    <!-- 부서 사용자 리스트 -->
+    <select id="selectDeptUserList" parameterType="map" resultType="tvframework.sym.grp.dto.CmmnGroupUserDTO">
+        SELECT    A.MBRSH_SQ AS mbrshSq
+                , A.USER_ID AS userId
+                , CASE WHEN #{languageCode} = 'en_US' THEN B.USER_ENG_NM ELSE B.USER_NM END AS userNm
+                , D.MESSAGE_CN AS deptNm
+          FROM CM_USER_ORGNZT_MBRSH A
+         INNER JOIN CM_USER B ON B.USER_ID = A.USER_ID
+         LEFT JOIN CM_DEPT C ON A.DEPT_CD = C.DEPT_CD AND A.CMPNY_CD = C.CMPNY_CD
+         LEFT JOIN CM_MESSAGE_LANG D ON D.LANG_KEY = C.DEPT_NM_KEY AND D.CMPNY_CD = C.CMPNY_CD AND D.LANG_CODE = #{languageCode}
+         WHERE A.CMPNY_CD = #{companyCode} AND A.DEPT_CD = #{deptCd} AND A.USE_FL = 'Y'
+         <if test="searchKeyword != null and searchKeyword != ''">
+             AND (A.USER_ID LIKE CONCAT('%', #{searchKeyword}, '%') OR B.USER_NM LIKE CONCAT('%', #{searchKeyword}, '%') OR B.USER_ENG_NM LIKE CONCAT('%', #{searchKeyword}, '%'))
+         </if>
+         ORDER BY A.USER_ID
+    </select>
+	
+    <!-- 사용자 검색 (팝업): MBRSH_SQ, USER_ID, USER_NM, DEPT_NM -->
+    <select id="selectUserSearchList" parameterType="map" resultType="tvframework.sym.grp.dto.CmmnGroupUserDTO">
+        SELECT   BASE.MBRSH_SQ AS mbrshSq
+                , BASE.USER_ID AS userId
+                , BASE.USER_NM AS userNm
+                , D.MESSAGE_CN AS deptNm
+          FROM (
+            SELECT A.MBRSH_SQ
+                  , A.USER_ID
+                  , CASE WHEN #{languageCode} = 'en_US' THEN B.USER_ENG_NM ELSE B.USER_NM END AS USER_NM
+                  , C.DEPT_NM_KEY
+                  , A.CMPNY_CD
+              FROM CM_USER_ORGNZT_MBRSH A
+             INNER JOIN CM_USER B ON B.USER_ID = A.USER_ID
+             LEFT JOIN CM_DEPT C ON A.DEPT_CD = C.DEPT_CD AND A.CMPNY_CD = C.CMPNY_CD
+             WHERE A.CMPNY_CD = #{companyCode} AND A.USE_FL = 'Y'
+          ) BASE
+         LEFT JOIN CM_MESSAGE_LANG D ON D.LANG_KEY = BASE.DEPT_NM_KEY AND D.CMPNY_CD = BASE.CMPNY_CD AND D.LANG_CODE = #{languageCode}
+         <where>
+             <if test="searchKeyword != null and searchKeyword != ''">
+                 AND CONCAT(BASE.USER_ID, BASE.USER_NM) LIKE CONCAT('%', #{searchKeyword}, '%')
+             </if>
+         </where>
+         ORDER BY BASE.USER_NM
+    </select>
+
+    <!-- 중복 아이디 검색: CM_CMPNY.CMPNY_CD, CM_USER.USER_ID 사용 가능 여부 (O/X) -->
+    <select id="checkDuplicateUserId" parameterType="map" resultType="string">
+        SELECT CASE WHEN EXISTS (SELECT 1 FROM CM_CMPNY WHERE CMPNY_CD = #{userId})
+                     OR EXISTS (SELECT 1 FROM CM_USER WHERE USER_ID = #{userId})
+                   THEN 'X' ELSE 'O' END
+    </select>
+ 
+    <!-- 부서코드 중복 체크 (회사별 PK: CMPNY_CD + DEPT_CD) -->
+    <select id="countDeptByCode" parameterType="map" resultType="int">
+        SELECT COUNT(1)
+          FROM CM_DEPT
+         WHERE CMPNY_CD = #{companyCode}
+           AND DEPT_CD = #{deptCd}
+    </select>
+
+	<!-- 회사별 사용자정보 저장: INSERT -->
+    <insert id="insertUserOrgnztMbrsh" parameterType="map">
+        INSERT INTO CM_USER_ORGNZT_MBRSH (MBRSH_SQ, USER_ID, CMPNY_CD, DEPT_CD, EMPL_NO, OFFM_TELNO, EMAIL_ADRES, OFCPS_NM_KEY, ECNY_YMD, RETIRE_YMD, USE_FL, CREATION_ID, CREATION_DT)
+        VALUES (#{mbrshSq}, #{userId}, #{companyCode}, #{deptCd}, #{emplNo}, #{offmTelno}, #{emailAdres}, #{ofcpsCd}, #{ecnyYmd}, #{retireYmd}, 'Y', #{creationId}, NOW())
+    </insert>
+	
+    <!-- 사용자 등록 (CM_USER, 변경된 테이블: USER_TYPE, SBSCRB_STTUS). profileFileSq 있을 때만 FILE_SQ 저장 -->
+    <insert id="insertUser" parameterType="map">
+        INSERT INTO CM_USER (USER_ID, USER_NM, USER_ENG_NM, USER_TYPE, PASSWORD, GENDER_CD, BRTHDY, PASSWORD_HINT, PASSWORD_CNSR, NATION_CD, ZIP_CD, ADRES_ONE, ADRES_TWO, CITY_NM, STATE_NM, HOUSE_TELNO, MBTLNUM, FXNUM, EMAIL_ADRES, SBSCRB_STTUS, CREATION_ID, CREATION_DT
+        <if test="profileFileSq != null and profileFileSq != ''">, FILE_SQ</if>
+        )
+        VALUES (#{userId}, #{userNm}, #{userEngNm}, COALESCE(NULLIF(#{userType}, ''), 'USER'), #{password}, #{genderCd}, #{brthdy}, #{passwordHint}, #{passwordCnsr}, #{nationCd}, #{zipCd}, #{adresOne}, #{adresTwo}, #{cityNm}, #{stateNm}, #{houseTelno}, #{mbtlnum}, #{fxnum}, #{emailAdres}, COALESCE(NULLIF(#{sbscrbSttus}, ''), 'P'), #{creationId}, NOW()
+        <if test="profileFileSq != null and profileFileSq != ''">, CAST(#{profileFileSq} AS DECIMAL(30,0))</if>
+        )
+    </insert>
+	
+    <!-- 부서 등록 -->
+    <insert id="insertDept" parameterType="map">
+        INSERT INTO CM_DEPT (CMPNY_CD, DEPT_CD, DEPT_NM_KEY, UPPER_DEPT_CD, DEPT_GRAD_CD, DPRLR_ID, EXPRTN_YMD, USE_FL, SORT_ORD, CREATION_ID, CREATION_DT)
+        VALUES (#{companyCode}, #{deptCd}, #{deptNmKey}, #{upperDeptCd}, #{deptGradCd}, #{dprlrId}, #{exprtnYmd}, #{useFl}, #{sortOrd}, #{creationId}, NOW())
+    </insert>
+
+    <!-- 사용자 정보 수정 -->
+    <update id="updateUser" parameterType="map">
+        UPDATE CM_USER
+           SET USER_NM = #{userNm}
+           , USER_ENG_NM = #{userEngNm}
+           , GENDER_CD = #{genderCd}
+           , BRTHDY = #{brthdy}
+           , ZIP_CD = #{zipCd}
+           , ADRES_ONE = #{adresOne}
+           , ADRES_TWO = #{adresTwo}
+           , CITY_NM = #{cityNm}
+           , STATE_NM = #{stateNm}
+           , NATION_CD = #{nationCd}
+           , HOUSE_TELNO = #{houseTelno}
+           , MBTLNUM = #{mbtlnum}
+           , FXNUM = #{fxnum}
+           , PASSWORD_HINT = #{passwordHint}
+           , PASSWORD_CNSR = #{passwordCnsr}
+           , EMAIL_ADRES = #{emailAdres}
+           <if test="profileFileSq != null">
+           , FILE_SQ =
+               <choose>
+                   <when test="profileFileSq == ''">NULL</when>
+                   <otherwise>CAST(#{profileFileSq} AS DECIMAL(30,0))</otherwise>
+               </choose>
+           </if>
+           , UPDATE_ID = #{updateId}
+           , UPDATE_DT = NOW()
+         WHERE USER_ID = #{userId}
+    </update>
+
+    <!-- CM_USER_ORGNZT_MBRSH: 전달된 컬럼만 갱신 (setXxx 플래그 + 값, NULL 허용) -->
+    <update id="updateUserOrgnztMbrshPartial" parameterType="map">
+        UPDATE CM_USER_ORGNZT_MBRSH
+        <set>
+            <if test="setDeptCd">DEPT_CD = #{deptCd, jdbcType=VARCHAR},</if>
+            <if test="setEmplNo">EMPL_NO = #{emplNo, jdbcType=VARCHAR},</if>
+            <if test="setOffmTelno">OFFM_TELNO = #{offmTelno, jdbcType=VARCHAR},</if>
+            <if test="setEmailAdres">EMAIL_ADRES = #{emailAdres, jdbcType=VARCHAR},</if>
+            <if test="setOfcpsCd">OFCPS_NM_KEY = #{ofcpsCd, jdbcType=VARCHAR},</if>
+            <if test="setEcnyYmd">ECNY_YMD = #{ecnyYmd, jdbcType=VARCHAR},</if>
+            <if test="setRetireYmd">RETIRE_YMD = #{retireYmd, jdbcType=VARCHAR},</if>
+            UPDATE_ID = #{updateId},
+            UPDATE_DT = NOW()
+        </set>
+        WHERE MBRSH_SQ = #{mbrshSq} AND USER_ID = #{userId}
+    </update>
+
+    <!-- 부서 정보 수정 -->
+    <update id="updateDept" parameterType="map">
+        UPDATE CM_DEPT
+           SET    DEPT_NM_KEY = #{deptNmKey}
+                , UPPER_DEPT_CD = #{upperDeptCd}
+                , DEPT_GRAD_CD = #{deptGradCd}
+                , DPRLR_ID = #{dprlrId}
+                , EXPRTN_YMD = #{exprtnYmd}
+                , USE_FL = #{useFl}
+                , SORT_ORD = #{sortOrd}
+                , UPDATE_ID = #{updateId}
+                , UPDATE_DT = NOW()
+         WHERE CMPNY_CD = #{companyCode} AND DEPT_CD = #{deptCd}
+    </update>
+
+    <!-- 부서 삭제(비활성): USE_FL = 'N' -->
+    <update id="deactivateDept" parameterType="map">
+        UPDATE CM_DEPT
+           SET USE_FL = 'N'
+             , UPDATE_ID = #{updateId}
+             , UPDATE_DT = NOW()
+         WHERE CMPNY_CD = #{companyCode}
+           AND DEPT_CD = #{deptCd}
+    </update>
+ 
+    <!-- 비밀번호 수정 (상세 저장 시) -->
+    <update id="updateUserPassword" parameterType="map">
+        UPDATE CM_USER 
+        SET PASSWORD  = #{password}
+          , UPDATE_ID = #{updateId}
+          , UPDATE_DT = NOW() 
+        WHERE USER_ID = #{userId}
+    </update>
+
+
+    <!-- 회사별 사용자정보 저장: UPDATE -->
+    <update id="updateUserOrgnztMbrsh" parameterType="map">
+        UPDATE CM_USER_ORGNZT_MBRSH
+           SET DEPT_CD = #{deptCd}
+           , EMPL_NO = #{emplNo}
+           , OFFM_TELNO = #{offmTelno}
+           , EMAIL_ADRES = #{emailAdres}
+           , OFCPS_NM_KEY = #{ofcpsCd}
+           , ECNY_YMD = #{ecnyYmd}
+           , RETIRE_YMD = #{retireYmd}
+           , UPDATE_ID = #{updateId}
+           , UPDATE_DT = NOW()
+         WHERE MBRSH_SQ = #{mbrshSq}
+    </update>
+	
+    <!-- 부서 사용자 배치: 목록에서 선택한 MBRSH_SQ 행만 DEPT_CD 변경 (다른 컬럼 유지) -->
+    <update id="updateUserOrgnztMbrshDeptCdByKey" parameterType="map">
+        UPDATE CM_USER_ORGNZT_MBRSH
+           SET DEPT_CD = #{deptCd}
+             , UPDATE_ID = #{updateId}
+             , UPDATE_DT = NOW()
+         WHERE MBRSH_SQ = #{mbrshSq}
+           AND CMPNY_CD = #{companyCode}
+           AND USER_ID = #{userId}
+           AND USE_FL = 'Y'
+    </update>
+
+    <!-- 부서 사용자 삭제: DEPT_CD 만 NULL -->
+    <update id="updateUserOrgnztMbrshDeptNull" parameterType="map">
+        UPDATE CM_USER_ORGNZT_MBRSH 
+        SET DEPT_CD = NULL
+          , UPDATE_ID = #{updateId}
+          , UPDATE_DT = NOW() 
+        WHERE MBRSH_SQ = #{mbrshSq}
+    </update>
+
+    <!-- 구독/가입 상태만 변경 (탈퇴 등) -->
+    <update id="updateUserSbscrSttus" parameterType="map">
+        UPDATE CM_USER
+           SET SBSCRB_STTUS = #{sbscrSttus}
+             , UPDATE_ID = #{updateId}
+             , UPDATE_DT = NOW()
+         WHERE USER_ID = #{userId}
+    </update>
+
+    <!-- 로그인 사용자 본인 암호변경: 기존 암호 일치 시에만 변경 -->
+    <update id="updateUserPasswordMatchOld" parameterType="java.util.Map">
+        UPDATE CM_USER
+        SET PASSWORD = #{new_password}
+        WHERE USER_ID = #{login_id}
+          AND PASSWORD = #{old_password}
+    </update>
+
+    <!-- 회사 사용자 삭제: 그룹 사용자 삭제 -->
+    <delete id="deleteGroupUserByMbrshSq" parameterType="map">
+        DELETE FROM CM_GROUP_USER WHERE CMPNY_CD = #{companyCode} AND MBRSH_SQ = #{mbrshSq}
+    </delete>
+
+    <!-- 회사 사용자 삭제: 구성원 삭제 -->
+    <delete id="deleteUserOrgnztMbrshByMbrshSq" parameterType="map">
+        DELETE FROM CM_USER_ORGNZT_MBRSH WHERE MBRSH_SQ = #{mbrshSq}
+    </delete>
+
+    <!-- 회사 사용자 삭제: 사용자 삭제 -->
+    <delete id="deleteUser" parameterType="map">
+        DELETE FROM CM_USER WHERE USER_ID = #{userId}
+    </delete>
+
+</mapper>

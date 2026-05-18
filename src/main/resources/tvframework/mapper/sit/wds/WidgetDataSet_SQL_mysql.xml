@@ -1,0 +1,107 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="WidgetDataSetMapper">
+
+    <!-- 데이터 유형 공통코드(CMMNCODE.580)는 CmmnCompanyMapper.selectCodeOptionByCodeId / CmmnCompanyService.selectCodeOption 사용 -->
+
+    <!-- 데이터셋 목록 -->
+    <select id="selectWidgetDataSetList" parameterType="map" resultType="tvframework.sit.wds.dto.WidgetDataSetDTO">
+        SELECT DATASET_ID      AS datasetId
+             , CMPNY_CD        AS cmpnyCd
+             , DATASET_NAME    AS datasetName
+             , DATASET_TY      AS datasetTy
+             , USE_FL          AS useFl
+             , DATE_FORMAT(IFNULL(UPDATE_DT, CREATION_DT), '%Y-%m-%d') AS modifyDt
+          FROM CM_WIDGET_DATASET
+         WHERE 1 = 1
+           AND CMPNY_CD = #{cmpnyCd}
+        <if test="dataType != null and dataType != ''">
+           AND DATASET_TY = #{dataType}
+        </if>
+        <if test="datasetName != null and datasetName != ''">
+           AND DATASET_NAME LIKE CONCAT('%', #{datasetName}, '%')
+        </if>
+         ORDER BY DATASET_ID ASC
+    </select>
+
+    <!-- 데이터셋 상세 -->
+    <select id="selectWidgetDataSetDetail" parameterType="map" resultType="tvframework.sit.wds.dto.WidgetDataSetDTO">
+        SELECT DATASET_ID      AS datasetId
+             , CMPNY_CD        AS cmpnyCd
+             , DATASET_NAME    AS datasetName
+             , DATASET_TY      AS datasetTy
+             , CAST(CONFIG_JSON AS CHAR) AS configJson
+             , USE_FL          AS useFl
+             , CREATION_ID     AS creationId
+             , DATE_FORMAT(CREATION_DT, '%Y-%m-%d %H:%i:%s') AS creationDt
+             , UPDATE_ID       AS updateId
+             , DATE_FORMAT(UPDATE_DT, '%Y-%m-%d %H:%i:%s') AS updateDt
+          FROM CM_WIDGET_DATASET
+         WHERE DATASET_ID = #{datasetId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </select>
+
+    <!-- 사용안함 가능 여부 (위젯 미사용 시 O) -->
+    <select id="selectUnusePossibleFlag" parameterType="map" resultType="string">
+        SELECT CASE WHEN COUNT(*) = 0 THEN 'O' ELSE 'X' END
+          FROM CM_WIDGET
+         WHERE DATASET_ID = #{datasetId}
+    </select>
+
+    <!-- 삭제 가능 여부 -->
+    <select id="selectDeletePossibleFlag" parameterType="map" resultType="string">
+        SELECT CASE WHEN COUNT(*) = 0 THEN 'O' ELSE 'X' END
+          FROM CM_WIDGET
+         WHERE DATASET_ID = #{datasetId}
+    </select>
+
+    <!-- 신규 DATASET_ID 채번 (DATASET-00001 형식) -->
+    <select id="selectNextDatasetId" resultType="string">
+        SELECT CONCAT('DATASET-', LPAD(IFNULL(MAX(CAST(SUBSTRING(DATASET_ID, 9) AS UNSIGNED)), 0) + 1, 5, '0'))
+          FROM CM_WIDGET_DATASET
+         WHERE DATASET_ID REGEXP '^DATASET-[0-9]+$'
+           AND CMPNY_CD = #{cmpnyCd}
+    </select>
+
+    <insert id="insertWidgetDataSet" parameterType="map">
+        INSERT INTO CM_WIDGET_DATASET (
+            DATASET_ID
+          , CMPNY_CD
+          , DATASET_NAME
+          , DATASET_TY
+          , CONFIG_JSON
+          , USE_FL
+          , CREATION_ID
+          , UPDATE_ID
+        ) VALUES (
+            #{datasetId}
+          , #{cmpnyCd}
+          , #{datasetName}
+          , #{datasetTy}
+          , CAST(#{configJson} AS JSON)
+          , #{useFl}
+          , #{creationId}
+          , #{updateId}
+        )
+    </insert>
+
+    <update id="updateWidgetDataSet" parameterType="map">
+        UPDATE CM_WIDGET_DATASET
+           SET DATASET_NAME = #{datasetName}
+             , DATASET_TY = #{datasetTy}
+             , CONFIG_JSON = CAST(#{configJson} AS JSON)
+             , USE_FL = #{useFl}
+             , UPDATE_ID = #{updateId}
+             , UPDATE_DT = NOW()
+        WHERE DATASET_ID = #{datasetId}
+          AND CMPNY_CD = #{cmpnyCd}
+    </update>
+
+    <delete id="deleteWidgetDataSet" parameterType="map">
+        DELETE FROM CM_WIDGET_DATASET
+         WHERE DATASET_ID = #{datasetId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </delete>
+
+</mapper>

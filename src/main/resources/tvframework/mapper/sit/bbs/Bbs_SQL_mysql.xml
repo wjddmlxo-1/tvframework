@@ -1,0 +1,866 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="BbsMapper">
+
+    <!-- 게시판 목록(유형명·상태색) -->
+    <select id="selectBbsList" parameterType="map" resultType="tvframework.sit.bbs.dto.BbsDTO">
+        SELECT BASE.BBS_ID       AS bbsId
+             , BASE.BBS_NM_KEY   AS bbsNmKey
+             , B.MESSAGE_CN      AS bbsName
+             , BASE.BBS_TY       AS bbsTy
+             , BASE.LAYOUT_TY_NM AS bbsTyNm
+             , BASE.STATUS_COLOR AS statusColor
+             , BASE.SORTING_SQ   AS sortingSq
+          FROM (
+            SELECT A.BBS_ID
+                 , A.BBS_NM_KEY
+                 , A.BBS_TY
+                 -- 저장값은 공통코드 DETAIL_CODE_VALUE(예: GENERAL)인 경우가 많음. ID와 VALUE 모두 매칭
+                 , (SELECT B1.MESSAGE_CN
+                      FROM CM_CODE_DETAIL A1
+                      LEFT JOIN CM_MESSAGE_LANG B1
+                        ON B1.LANG_KEY = A1.CODE_LANG_KEY
+                       AND B1.LANG_CODE = #{languageCode}
+                       AND B1.CMPNY_CD = A1.CMPNY_CD
+                     WHERE A1.CODE_ID = 'CMMNCODE.BBS.001'
+                       AND A1.CMPNY_CD = A.CMPNY_CD
+                       AND (A1.DETAIL_CODE_VALUE = A.BBS_TY OR A1.DETAIL_CODE_ID = A.BBS_TY)
+                     LIMIT 1
+                 ) AS LAYOUT_TY_NM
+                 , CASE WHEN A.USE_FL = 'N' THEN 'RED'
+                     WHEN (
+                         (SELECT COUNT(*)
+                            FROM CM_NTT_COMMENT C
+                           WHERE C.NTT_SQ IN (
+                                 SELECT NTT_SQ
+                                   FROM CM_NTT
+                                  WHERE BBS_ID = A.BBS_ID AND DELETE_FL = 'N' AND USE_FL = 'Y'
+                           ) AND C.USE_FL = 'Y' AND C.APPROVED_FL = 'N'
+                         )
+                         +
+                         (SELECT COUNT(*)
+                            FROM CM_NTT N
+                           WHERE N.BBS_ID = A.BBS_ID AND N.DELETE_FL = 'Y' AND N.USE_FL = 'Y'
+                         )
+                     ) &gt; 0 THEN 'ORANGE'
+                     ELSE 'GREEN'
+                   END AS STATUS_COLOR
+                 , A.SORTING_SQ
+              FROM CM_BBS A
+             WHERE A.CMPNY_CD = #{cmpnyCd}
+            <if test="bbsTy != null and bbsTy != ''">
+               AND A.BBS_TY = #{bbsTy}
+            </if>
+            <if test="searchKeyword != null and searchKeyword != ''">
+               AND A.BBS_NAME LIKE CONCAT('%', #{searchKeyword}, '%')
+            </if>
+            UNION ALL
+            SELECT 'BBS-POPUP' AS BBS_ID
+                 , 'menu.BBS.titlenm.popupNotice' AS BBS_NM_KEY
+                 , '' AS BBS_TY
+                 , '' AS LAYOUT_TY_NM
+                 , (SELECT CASE WHEN COUNT(POPUP_SQ) &gt; 0 THEN 'GREEN' ELSE 'RED' END
+                      FROM CM_NTT_POPUP A
+                     WHERE A.CMPNY_CD = #{cmpnyCd}
+                       AND A.START_DT &lt; SYSDATE()
+                       AND A.END_DT &gt; SYSDATE()
+                       AND A.USE_FL = 'Y') AS STATUS_COLOR
+                 , 2147483647 AS SORTING_SQ
+              FROM DUAL
+            ) BASE
+         LEFT JOIN CM_MESSAGE_LANG B
+           ON B.LANG_KEY = BASE.BBS_NM_KEY
+          AND B.LANG_CODE = #{languageCode}
+          AND B.CMPNY_CD = #{cmpnyCd}
+         ORDER BY BASE.SORTING_SQ ASC
+    </select>
+
+    <select id="selectBbsDetail" parameterType="map" resultType="tvframework.sit.bbs.dto.BbsDTO">
+        SELECT A.BBS_ID       AS bbsId
+             , A.CMPNY_CD     AS cmpnyCd
+             , A.BBS_NM_KEY   AS bbsNmKey
+             , B.MESSAGE_CN   AS bbsName
+             , A.BBS_CN       AS bbsCn
+             , A.BBS_TY       AS bbsTy
+             , A.LAYOUT_TY    AS layoutTy
+             , A.REPLY_FL     AS replyFl
+             , A.COMMENT_FL   AS commentFl
+             , A.LIKE_FL      AS likeFl
+             , A.DISLIKE_FL   AS dislikeFl
+             , A.ATCHMNFL_FL  AS atchmnflFl
+             , A.NOTICE_FL    AS noticeFl
+             , A.ENFRC_SECRET_FL AS enfrcSecretFl
+             , A.ANONYMOUS_FL AS anonymousFl
+             , A.COMMENT_CONFM_FL AS commentConfmFl
+             , A.RESVE_FL     AS resveFl
+             , A.CATEGORY_FL  AS categoryFl
+             , A.MAX_FILE_SIZE AS maxFileSize
+             , A.MAX_FILE_COUNT AS maxFileCount
+             , A.PERM_EXTSN   AS permExtsn
+             , A.POSTS_PER_PAGE AS postsPerPage
+             , A.TITLE_LENGTH AS titleLength
+             , DATE_FORMAT(A.VALID_FROM, '%Y-%m-%d %H:%i:%s') AS validFrom
+             , DATE_FORMAT(A.VALID_TO, '%Y-%m-%d %H:%i:%s') AS validTo
+             , A.SORTING_SQ   AS sortingSq
+             , A.USE_FL       AS useFl
+             , A.CREATION_ID  AS creationId
+             , DATE_FORMAT(A.CREATION_DT, '%Y-%m-%d %H:%i:%s') AS creationDt
+             , A.UPDATE_ID    AS updateId
+             , DATE_FORMAT(A.UPDATE_DT, '%Y-%m-%d %H:%i:%s') AS updateDt
+          FROM CM_BBS A
+          LEFT JOIN CM_MESSAGE_LANG B
+            ON B.LANG_KEY = A.BBS_NM_KEY
+           AND B.LANG_CODE = #{languageCode}
+           AND B.CMPNY_CD = A.CMPNY_CD
+         WHERE A.BBS_ID = #{bbsId}
+           AND A.CMPNY_CD = #{cmpnyCd}
+    </select>
+
+    <select id="selectMaxSortingSq" parameterType="map" resultType="int">
+        SELECT COALESCE(MAX(SORTING_SQ), 0)
+          FROM CM_BBS
+         WHERE CMPNY_CD = #{cmpnyCd}
+    </select>
+
+    <select id="countNttByBbs" parameterType="map" resultType="int">
+        SELECT COUNT(*)
+          FROM CM_NTT
+         WHERE BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+           AND IFNULL(USE_FL,'Y') = 'Y'
+    </select>
+	
+    <!-- 게시판 유형(CMMNCODE.BBS.001) / 게시판유형별 기능(CODE_ID=게시판유형코드) 등: 회사별 CM_CODE_DETAIL + 다국어 -->
+    <select id="selectBbsCodeDetailOptions" parameterType="map" resultType="tvframework.sit.bbs.dto.BbsCodeDetailOptionDTO">
+        SELECT B.MESSAGE_CN        AS name
+             , A.DETAIL_CODE_ID    AS detailCodeId
+             , A.DETAIL_CODE_VALUE AS detailCodeValue
+             , A.USE_FL            AS useFl
+             , A.SORTING_SQ        AS sortingSq
+             , B.LANG_KEY          AS langKey
+          FROM CM_CODE_DETAIL A
+          LEFT JOIN CM_MESSAGE_LANG B
+            ON B.LANG_KEY = A.CODE_LANG_KEY
+           AND B.LANG_CODE = #{languageCode}
+           AND B.CMPNY_CD = A.CMPNY_CD
+         WHERE A.CODE_ID = #{codeId}
+           AND A.CMPNY_CD = #{cmpnyCd}
+         ORDER BY A.SORTING_SQ ASC
+    </select>
+	
+	<!-- 카테고리 -->
+    <select id="selectBbsCategories" parameterType="map" resultType="tvframework.sit.bbs.dto.BbsCategoryDTO">
+        SELECT CAST(A.CATEGORY_SQ AS CHAR) AS categorySq
+             , A.BBS_ID AS bbsId
+             , A.CMPNY_CD AS cmpnyCd
+             , A.CATEGORY_NM AS categoryNm
+             , A.SORTING_SQ AS sortingSq
+          FROM CM_BBS_CATEGORY A
+         WHERE A.BBS_ID = #{bbsId}
+           AND A.CMPNY_CD = #{cmpnyCd}
+         ORDER BY A.SORTING_SQ ASC, A.CATEGORY_SQ ASC
+    </select>
+	
+    <select id="countCommentByBbs" parameterType="map" resultType="int">
+        SELECT COUNT(*)
+          FROM CM_NTT_COMMENT C
+         INNER JOIN CM_NTT N ON N.NTT_SQ = C.NTT_SQ
+         WHERE N.BBS_ID = #{bbsId}
+           AND N.CMPNY_CD = #{cmpnyCd}
+    </select>
+
+    <!-- 휴지통 탭 표시용 색상 -->
+    <select id="selectTrashTabStatusColor" parameterType="map" resultType="java.lang.String">
+        SELECT CASE WHEN COUNT(*) > 0 THEN 'ORANGE' ELSE NULL END
+          FROM CM_NTT A
+         WHERE A.BBS_ID = #{bbsId}
+           AND A.CMPNY_CD = #{cmpnyCd}
+           AND A.DELETE_FL = 'Y'
+           AND A.USE_FL = 'Y'
+    </select>
+
+    <!-- 댓글승인 탭 표시용 색상 -->
+    <select id="selectCommentTabStatusColor" parameterType="map" resultType="java.lang.String">
+        SELECT CASE WHEN COUNT(*) > 0 THEN 'ORANGE' ELSE NULL END
+          FROM CM_NTT_COMMENT C
+         WHERE C.NTT_SQ IN (
+               SELECT N.NTT_SQ
+                 FROM CM_NTT N
+                WHERE N.BBS_ID = #{bbsId}
+                  AND N.CMPNY_CD = #{cmpnyCd}
+                  AND N.DELETE_FL = 'N'
+                  AND N.USE_FL = 'Y'
+           )
+           AND C.USE_FL = 'Y'
+           AND C.APPROVED_FL = 'N'
+    </select>
+
+	<!-- 권한: 게시판 권한 목록 (대상명은 유형별 서브쿼리 — 표준 쿼리와 동일 로직, USER는 MBRSH_SQ 우선·USER_ID 폴백) -->
+    <select id="selectBbsAuthors" parameterType="map" resultType="tvframework.sit.bbs.dto.BbsAuthorDTO">
+        SELECT CAST(BASE.AUTHOR_SQ AS CHAR) AS authorSq
+             , BASE.BBS_ID AS bbsId
+             , BASE.CMPNY_CD AS cmpnyCd
+             , BASE.TARGET_TY AS targetTy
+             , BASE.TARGET_CD AS targetCd
+             , CASE BASE.TARGET_TY
+                    WHEN 'USER' THEN IFNULL(
+                        (SELECT CONCAT(
+                            CASE WHEN #{languageCode} = 'en_US' THEN B.USER_ENG_NM ELSE B.USER_NM END,
+                            '(', A.USER_ID, ')')
+                           FROM CM_USER_ORGNZT_MBRSH A
+                          INNER JOIN CM_USER B ON A.USER_ID = B.USER_ID
+                          WHERE A.CMPNY_CD = BASE.CMPNY_CD
+                            AND A.MBRSH_SQ = BASE.TARGET_CD
+                            AND A.USE_FL = 'Y'
+                          LIMIT 1),
+                        (SELECT CONCAT(
+                            CASE WHEN #{languageCode} = 'en_US' THEN IFNULL(U2.USER_ENG_NM, U2.USER_NM) ELSE U2.USER_NM END,
+                            '(', U2.USER_ID, ')')
+                           FROM CM_USER U2
+                          WHERE U2.USER_ID = BASE.TARGET_CD
+                          LIMIT 1))
+                    WHEN 'GROUP' THEN
+                        (SELECT CONCAT(
+                            CASE WHEN #{languageCode} = 'en_US' THEN G2.GROUP_ENG_NM ELSE G2.GROUP_NM END,
+                            '(', G2.GROUP_ID, ')')
+                           FROM CM_GROUP G2
+                          WHERE G2.CMPNY_CD = BASE.CMPNY_CD
+                            AND G2.GROUP_ID = BASE.TARGET_CD
+                            AND G2.USE_FL = 'Y'
+                          LIMIT 1)
+                    WHEN 'DEPT' THEN
+                        (SELECT CONCAT(B2.MESSAGE_CN, '(', D2.DEPT_CD, ')')
+                           FROM CM_DEPT D2
+                           LEFT JOIN CM_MESSAGE_LANG B2
+                             ON B2.LANG_KEY = D2.DEPT_NM_KEY
+                            AND B2.CMPNY_CD = D2.CMPNY_CD
+                            AND B2.LANG_CODE = #{languageCode}
+                          WHERE D2.CMPNY_CD = BASE.CMPNY_CD
+                            AND D2.DEPT_CD = BASE.TARGET_CD
+                            AND D2.EXPRTN_YMD &gt; DATE_FORMAT(CURDATE(), '%Y%m%d')
+                            AND D2.USE_FL = 'Y'
+                          LIMIT 1)
+                    WHEN 'ROLE' THEN
+                        (SELECT CONCAT(AUTHOR_NM, '(', AUTHOR_CD, ')')
+                           FROM CM_AUTHOR R2
+                          WHERE R2.CMPNY_CD = BASE.CMPNY_CD
+                            AND R2.AUTHOR_CD = BASE.TARGET_CD
+                            AND R2.USE_FL = 'Y'
+                          LIMIT 1)
+                    ELSE IFNULL(BASE.TARGET_CD, '')
+               END AS targetNm
+             , BASE.READING_FL AS readingFl
+             , BASE.WRITING_FL AS writingFl
+             , BASE.REPLY_FL AS replyFl
+             , BASE.MANAGER_FL AS managerFl
+             , BASE.SORTING_SQ AS sortingSq
+          FROM CM_BBS_AUTHOR BASE
+         WHERE BASE.CMPNY_CD = #{cmpnyCd}
+           AND BASE.BBS_ID = #{bbsId}
+         ORDER BY BASE.SORTING_SQ ASC, BASE.AUTHOR_SQ ASC
+    </select>
+	
+	<!-- 휴지통 목록 조회 -->
+    <select id="selectTrashNttList" parameterType="map" resultType="tvframework.sit.bbs.dto.BbsNttTrashDTO">
+        SELECT CAST(A.NTT_SQ AS CHAR) AS nttSq
+             , A.BBS_ID AS bbsId
+             , A.CMPNY_CD AS cmpnyCd
+             , CASE WHEN A.CATEGORY_SQ IS NOT NULL THEN CONCAT('[', IFNULL(C.CATEGORY_NM,''), ']', IFNULL(A.TITLE,''))
+                    ELSE IFNULL(A.TITLE,'')
+               END AS title
+             , DATE_FORMAT(A.CREATION_DT, '%Y-%m-%d %H:%i:%s') AS creationDt
+             , CONCAT(IFNULL(B.USER_NM,''), '(', IFNULL(A.CREATION_ID,''), ')') AS userNm
+          FROM CM_NTT A
+          LEFT JOIN CM_USER B ON B.USER_ID = A.CREATION_ID
+          LEFT JOIN CM_BBS_CATEGORY C ON C.BBS_ID = A.BBS_ID AND C.CMPNY_CD = A.CMPNY_CD AND C.CATEGORY_SQ = A.CATEGORY_SQ
+         WHERE A.BBS_ID = #{bbsId}
+           AND A.CMPNY_CD = #{cmpnyCd}
+           AND A.DELETE_FL = 'Y'
+           AND A.USE_FL = 'Y'
+         ORDER BY A.CREATION_DT DESC
+    </select>
+	
+	 <!-- 승인 대기 댓글 조회 -->
+    <select id="selectPendingComments" parameterType="map" resultType="tvframework.sit.bbs.dto.BbsCommentPendingDTO">
+        SELECT CAST(A.COMMENT_SQ AS CHAR) AS commentSq
+             , CAST(A.NTT_SQ AS CHAR) AS nttSq
+             , CAST(A.MBRSH_SQ AS CHAR) AS mbrshSq
+             , A.COMMENT AS comment
+             , DATE_FORMAT(A.CREATION_DT, '%Y-%m-%d %H:%i:%s') AS creationDt
+             , CONCAT(IFNULL(B.USER_NM, ''), '(', IFNULL(A.CREATION_ID, ''), ')') AS userNm
+          FROM CM_NTT_COMMENT A
+          LEFT JOIN CM_USER B ON B.USER_ID = A.CREATION_ID
+         WHERE A.NTT_SQ IN (
+               SELECT N.NTT_SQ
+                 FROM CM_NTT N
+                WHERE N.BBS_ID = #{bbsId}
+                  AND N.CMPNY_CD = #{cmpnyCd}
+                  AND N.DELETE_FL = 'N'
+                  AND N.USE_FL = 'Y'
+           )
+           AND A.USE_FL = 'Y'
+           AND A.APPROVED_FL = 'N'
+         ORDER BY A.CREATION_DT DESC
+    </select>
+
+    <!-- 팝업공지 내역 조회 -->
+    <select id="selectPopupNoticeList" parameterType="map" resultType="tvframework.sit.bbs.dto.BbsPopupNoticeDTO">
+        SELECT CAST(A.POPUP_SQ AS CHAR) AS popupSq
+             , CAST(A.NTT_SQ AS CHAR)   AS nttSq
+             , A.BBS_ID                 AS bbsId
+             , A.CMPNY_CD               AS cmpnyCd
+             , (SELECT M.MESSAGE_CN
+                  FROM CM_MESSAGE_LANG M
+                 WHERE M.LANG_KEY = C.BBS_NM_KEY
+                   AND M.CMPNY_CD = A.CMPNY_CD
+                   AND M.LANG_CODE = #{languageCode}
+                 LIMIT 1)               AS bbsNm
+             , B.TITLE                  AS title
+             , A.HIDE_FL                AS hideFl
+             , A.USE_FL                 AS useFl
+             , CONCAT(
+                 CASE WHEN #{languageCode} = 'en_US' THEN IFNULL(D.USER_ENG_NM, D.USER_NM) ELSE IFNULL(D.USER_NM, '') END,
+                 '(',
+                 IFNULL(B.CREATION_ID, ''),
+                 ')'
+               )                        AS userNm
+             , DATE_FORMAT(B.CREATION_DT, '%Y-%m-%d %H:%i:%s') AS creationDt
+             , CASE WHEN (A.START_DT &lt; SYSDATE() AND A.END_DT &gt; SYSDATE() AND A.USE_FL = 'Y')
+                    THEN 'GREEN' ELSE 'RED'
+               END                      AS statusColor
+          FROM CM_NTT_POPUP A
+         INNER JOIN CM_NTT B ON B.NTT_SQ = A.NTT_SQ AND B.BBS_ID = A.BBS_ID AND B.CMPNY_CD = A.CMPNY_CD
+         INNER JOIN CM_BBS C ON C.BBS_ID = A.BBS_ID AND C.CMPNY_CD = A.CMPNY_CD
+          LEFT JOIN CM_USER D ON D.USER_ID = B.CREATION_ID
+         WHERE A.CMPNY_CD = #{cmpnyCd}
+         ORDER BY A.POPUP_SQ ASC
+    </select>
+
+    <!-- 팝업공지 설정 조회 -->
+    <select id="selectPopupSetting" parameterType="map" resultType="tvframework.sit.bbs.dto.BbsPopupSettingDTO">
+        SELECT CAST(POPUP_SQ AS CHAR) AS popupSq
+             , CAST(NTT_SQ AS CHAR)   AS nttSq
+             , BBS_ID                 AS bbsId
+             , CMPNY_CD               AS cmpnyCd
+             , XCNTS                  AS xcnts
+             , YDNTS                  AS ydnts
+             , WIDTH                  AS width
+             , VRTICL                 AS vrticl
+             , DATE_FORMAT(START_DT, '%Y-%m-%d %H:%i:%s') AS startDt
+             , DATE_FORMAT(END_DT, '%Y-%m-%d %H:%i:%s') AS endDt
+             , HIDE_FL                AS hideFl
+             , USE_FL                 AS useFl
+          FROM CM_NTT_POPUP
+         WHERE POPUP_SQ = CAST(#{popupSq} AS DECIMAL(30,0))
+           AND NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+         ORDER BY POPUP_SQ ASC
+         LIMIT 1
+    </select>
+
+    <!-- 팝업공지 미리보기 상세 -->
+    <select id="selectPopupPreview" parameterType="map" resultType="tvframework.sit.bbs.dto.BbsPopupPreviewDTO">
+        SELECT CAST(P.POPUP_SQ AS CHAR) AS popupSq
+             , CAST(N.NTT_SQ AS CHAR) AS nttSq
+             , N.BBS_ID AS bbsId
+             , N.CMPNY_CD AS cmpnyCd
+             , CASE
+                   WHEN N.CATEGORY_SQ IS NOT NULL
+                   THEN CONCAT('[', IFNULL(C.CATEGORY_NM, ''), '] ', IFNULL(N.TITLE, ''))
+                   ELSE IFNULL(N.TITLE, '')
+               END AS title
+             , N.CONTENTS AS contents
+             , IFNULL(N.RD_CNT, 0) AS rdCnt
+             , IFNULL(N.LIKE_CNT, 0) AS likeCnt
+             , IFNULL(N.DISLIKE_CNT, 0) AS dislikeCnt
+             , IFNULL(N.FAVORITE_CNT, 0) AS favoriteCnt
+             , CASE WHEN #{languageCode} = 'en_US' THEN IFNULL(U.USER_ENG_NM, U.USER_NM) ELSE IFNULL(U.USER_NM, '') END AS userNm
+             , DATE_FORMAT(N.CREATION_DT, '%Y.%m.%d') AS creationDt
+             , B.LIKE_FL AS likeFl
+             , CASE
+                   WHEN B.LIKE_FL = 'Y' THEN (
+                       CASE WHEN (
+                           SELECT COUNT(*)
+                             FROM CM_NTT_VOTE V
+                            WHERE V.NTT_SQ = N.NTT_SQ
+                              AND V.BBS_ID = N.BBS_ID
+                              AND V.CMPNY_CD = N.CMPNY_CD
+                              AND V.VOTE_GB = 'L'
+                              AND V.MBRSH_SQ = (
+                                  SELECT M.MBRSH_SQ
+                                    FROM CM_USER_ORGNZT_MBRSH M
+                                    INNER JOIN CM_USER UU ON UU.USER_ID = M.USER_ID
+                                   WHERE M.CMPNY_CD = N.CMPNY_CD
+                                     AND M.USER_ID = #{userId}
+                                     AND M.USE_FL = 'Y'
+                                   LIMIT 1
+                              )
+                       ) > 0 THEN 'Y' ELSE 'N' END
+                   )
+                   ELSE NULL
+               END AS myLikeFl
+             , B.DISLIKE_FL AS dislikeFl
+             , CASE
+                   WHEN B.DISLIKE_FL = 'Y' THEN (
+                       CASE WHEN (
+                           SELECT COUNT(*)
+                             FROM CM_NTT_VOTE V
+                            WHERE V.NTT_SQ = N.NTT_SQ
+                              AND V.BBS_ID = N.BBS_ID
+                              AND V.CMPNY_CD = N.CMPNY_CD
+                              AND V.VOTE_GB = 'D'
+                              AND V.MBRSH_SQ = (
+                                  SELECT M.MBRSH_SQ
+                                    FROM CM_USER_ORGNZT_MBRSH M
+                                    INNER JOIN CM_USER UU ON UU.USER_ID = M.USER_ID
+                                   WHERE M.CMPNY_CD = N.CMPNY_CD
+                                     AND M.USER_ID = #{userId}
+                                     AND M.USE_FL = 'Y'
+                                   LIMIT 1
+                              )
+                       ) > 0 THEN 'Y' ELSE 'N' END
+                   )
+                   ELSE NULL
+               END AS myDislikeFl
+             , CASE WHEN (
+                   SELECT COUNT(*)
+                     FROM CM_NTT_FAVORITE F
+                    WHERE F.NTT_SQ = N.NTT_SQ
+                      AND F.BBS_ID = N.BBS_ID
+                      AND F.CMPNY_CD = N.CMPNY_CD
+                      AND F.MBRSH_SQ = (
+                          SELECT M.MBRSH_SQ
+                            FROM CM_USER_ORGNZT_MBRSH M
+                            INNER JOIN CM_USER UU ON UU.USER_ID = M.USER_ID
+                           WHERE M.CMPNY_CD = N.CMPNY_CD
+                             AND M.USER_ID = #{userId}
+                             AND M.USE_FL = 'Y'
+                           LIMIT 1
+                      )
+               ) > 0 THEN 'Y' ELSE 'N' END AS myFavoriteFl
+             , P.XCNTS AS xcnts
+             , P.YDNTS AS ydnts
+             , P.WIDTH AS width
+             , P.VRTICL AS vrticl
+          FROM CM_NTT_POPUP P
+         INNER JOIN CM_NTT N ON N.NTT_SQ = P.NTT_SQ AND N.BBS_ID = P.BBS_ID AND N.CMPNY_CD = P.CMPNY_CD
+         INNER JOIN CM_BBS B ON B.BBS_ID = N.BBS_ID AND B.CMPNY_CD = N.CMPNY_CD
+          LEFT JOIN CM_USER U ON U.USER_ID = N.CREATION_ID
+          LEFT JOIN CM_BBS_CATEGORY C ON C.BBS_ID = N.BBS_ID AND C.CMPNY_CD = N.CMPNY_CD AND C.CATEGORY_SQ = N.CATEGORY_SQ
+         WHERE P.POPUP_SQ = CAST(#{popupSq} AS DECIMAL(30,0))
+           AND P.NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND P.BBS_ID = #{bbsId}
+           AND P.CMPNY_CD = #{cmpnyCd}
+           AND N.DELETE_FL = 'N'
+           AND N.USE_FL = 'Y'
+         LIMIT 1
+    </select>
+
+    <insert id="insertBbs" parameterType="map">
+        INSERT INTO CM_BBS (
+            BBS_ID, CMPNY_CD, BBS_NM_KEY, BBS_CN, BBS_TY, LAYOUT_TY,
+            REPLY_FL, COMMENT_FL, LIKE_FL, DISLIKE_FL, ATCHMNFL_FL, NOTICE_FL,
+            ENFRC_SECRET_FL, ANONYMOUS_FL, COMMENT_CONFM_FL, RESVE_FL, CATEGORY_FL,
+            MAX_FILE_SIZE, MAX_FILE_COUNT, PERM_EXTSN, POSTS_PER_PAGE, TITLE_LENGTH,
+            VALID_FROM, VALID_TO, SORTING_SQ, USE_FL, CREATION_ID, UPDATE_ID
+        ) VALUES (
+            #{bbsId}, #{cmpnyCd}, #{bbsNmKey}, #{bbsCn}, #{bbsTy}, #{layoutTy},
+            #{replyFl}, #{commentFl}, #{likeFl}, #{dislikeFl}, #{atchmnflFl}, #{noticeFl},
+            #{enfrcSecretFl}, #{anonymousFl}, #{commentConfmFl}, #{resveFl}, #{categoryFl},
+            #{maxFileSize}, #{maxFileCount}, #{permExtsn}, #{postsPerPage}, #{titleLength},
+            <choose>
+                <when test="validFrom != null and validFrom != ''">STR_TO_DATE(#{validFrom}, '%Y-%m-%d %H:%i:%s')</when>
+                <otherwise>NULL</otherwise>
+            </choose>,
+            <choose>
+                <when test="validTo != null and validTo != ''">STR_TO_DATE(#{validTo}, '%Y-%m-%d %H:%i:%s')</when>
+                <otherwise>NULL</otherwise>
+            </choose>,
+            #{sortingSq}, #{useFl}, #{creationId}, #{updateId}
+        )
+    </insert>
+
+	<insert id="insertBbsCategory" parameterType="map">
+        INSERT INTO CM_BBS_CATEGORY (
+            CATEGORY_SQ, BBS_ID, CMPNY_CD, CATEGORY_NM, SORTING_SQ, CREATION_ID, UPDATE_ID
+        ) VALUES (
+            CAST(#{categorySq} AS DECIMAL(30,0)), #{bbsId}, #{cmpnyCd}, #{categoryNm}, #{sortingSq}, #{creationId}, #{updateId}
+        )
+    </insert>
+	
+	<insert id="insertBbsAuthor" parameterType="map">
+        INSERT INTO CM_BBS_AUTHOR (
+            AUTHOR_SQ, BBS_ID, CMPNY_CD, TARGET_TY, TARGET_CD,
+            READING_FL, WRITING_FL, REPLY_FL, MANAGER_FL, SORTING_SQ,
+            CREATION_ID, UPDATE_ID
+        ) VALUES (
+            CAST(#{authorSq} AS DECIMAL(30,0)), #{bbsId}, #{cmpnyCd}, #{targetTy}, #{targetCd},
+            #{readingFl}, #{writingFl}, #{replyFl}, #{managerFl}, #{sortingSq},
+            #{creationId}, #{updateId}
+        )
+    </insert>
+	
+    <update id="updateBbs" parameterType="map">
+        UPDATE CM_BBS SET
+            BBS_NM_KEY = #{bbsNmKey}
+          , BBS_CN = #{bbsCn}
+          , BBS_TY = #{bbsTy}
+          , LAYOUT_TY = #{layoutTy}
+          , REPLY_FL = #{replyFl}
+          , COMMENT_FL = #{commentFl}
+          , LIKE_FL = #{likeFl}
+          , DISLIKE_FL = #{dislikeFl}
+          , ATCHMNFL_FL = #{atchmnflFl}
+          , NOTICE_FL = #{noticeFl}
+          , ENFRC_SECRET_FL = #{enfrcSecretFl}
+          , ANONYMOUS_FL = #{anonymousFl}
+          , COMMENT_CONFM_FL = #{commentConfmFl}
+          , RESVE_FL = #{resveFl}
+          , CATEGORY_FL = #{categoryFl}
+          , MAX_FILE_SIZE = #{maxFileSize}
+          , MAX_FILE_COUNT = #{maxFileCount}
+          , PERM_EXTSN = #{permExtsn}
+          , POSTS_PER_PAGE = #{postsPerPage}
+          , TITLE_LENGTH = #{titleLength}
+          , VALID_FROM = <choose><when test="validFrom != null and validFrom != ''">STR_TO_DATE(#{validFrom}, '%Y-%m-%d %H:%i:%s')</when><otherwise>NULL</otherwise></choose>
+          , VALID_TO = <choose><when test="validTo != null and validTo != ''">STR_TO_DATE(#{validTo}, '%Y-%m-%d %H:%i:%s')</when><otherwise>NULL</otherwise></choose>
+          , SORTING_SQ = #{sortingSq}
+          , USE_FL = #{useFl}
+          , UPDATE_ID = #{updateId}
+          , UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </update>
+
+	<update id="updateBbsSorting" parameterType="map">
+        UPDATE CM_BBS SET SORTING_SQ = #{sortingSq}, UPDATE_ID = #{updateId}, UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </update>
+	
+	<update id="updateBbsCategory" parameterType="map">
+        UPDATE CM_BBS_CATEGORY SET
+            CATEGORY_NM = #{categoryNm}
+          , SORTING_SQ = #{sortingSq}
+          , UPDATE_ID = #{updateId}
+          , UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE CATEGORY_SQ = CAST(#{categorySq} AS DECIMAL(30,0))
+           AND BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </update>
+	
+	    <update id="updateBbsAuthor" parameterType="map">
+        UPDATE CM_BBS_AUTHOR SET
+            TARGET_TY = #{targetTy}
+          , TARGET_CD = #{targetCd}
+          , READING_FL = #{readingFl}
+          , WRITING_FL = #{writingFl}
+          , REPLY_FL = #{replyFl}
+          , MANAGER_FL = #{managerFl}
+          , SORTING_SQ = #{sortingSq}
+          , UPDATE_ID = #{updateId}
+          , UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE AUTHOR_SQ = CAST(#{authorSq} AS DECIMAL(30,0))
+           AND BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </update>
+
+    <!-- 복원하기 -->
+    <update id="restoreTrashNtt" parameterType="map">
+        UPDATE CM_NTT
+           SET DELETE_FL = 'N'
+             , DELETE_DT = NULL
+             , UPDATE_ID = #{updateId}
+             , UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </update>
+
+    <!-- 완전삭제하기 -->
+    <update id="purgeTrashNtt" parameterType="map">
+        UPDATE CM_NTT
+           SET USE_FL = 'N'
+             , UPDATE_ID = #{updateId}
+             , UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </update>
+
+    <update id="restoreAllTrashNtt" parameterType="map">
+        UPDATE CM_NTT A
+         INNER JOIN CM_BBS BB ON BB.BBS_ID = A.BBS_ID AND BB.CMPNY_CD = #{cmpnyCd}
+           SET A.DELETE_FL = 'N'
+             , A.DELETE_DT = NULL
+             , A.UPDATE_ID = #{updateId}
+             , A.UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE A.BBS_ID = #{bbsId}
+           AND A.DELETE_FL = 'Y'
+           AND IFNULL(A.USE_FL, 'Y') = 'Y'
+    </update>
+
+    <update id="purgeAllTrashNtt" parameterType="map">
+        UPDATE CM_NTT A
+         INNER JOIN CM_BBS BB ON BB.BBS_ID = A.BBS_ID AND BB.CMPNY_CD = #{cmpnyCd}
+           SET A.USE_FL = 'N'
+             , A.UPDATE_ID = #{updateId}
+             , A.UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE A.BBS_ID = #{bbsId}
+           AND A.DELETE_FL = 'Y'
+           AND IFNULL(A.USE_FL, 'Y') = 'Y'
+    </update>
+	
+		    <!-- 승인하기 -->
+    <update id="approveComment" parameterType="map">
+        UPDATE CM_NTT_COMMENT
+           SET APPROVED_FL = 'Y'
+             , UPDATE_ID = #{updateId}
+             , UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE COMMENT_SQ = CAST(#{commentSq} AS DECIMAL(30,0))
+           AND NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND MBRSH_SQ = CAST(#{mbrshSq} AS DECIMAL(30,0))
+    </update>
+
+    <!-- 거절하기 -->
+    <update id="rejectComment" parameterType="map">
+        UPDATE CM_NTT_COMMENT
+           SET USE_FL = 'N'
+             , UPDATE_ID = #{updateId}
+             , UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE COMMENT_SQ = CAST(#{commentSq} AS DECIMAL(30,0))
+           AND NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND MBRSH_SQ = CAST(#{mbrshSq} AS DECIMAL(30,0))
+    </update>
+
+    <update id="approveAllPendingComments" parameterType="map">
+        UPDATE CM_NTT_COMMENT C
+           SET C.APPROVED_FL = 'Y'
+             , C.UPDATE_ID = #{updateId}
+             , C.UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE C.NTT_SQ IN (
+               SELECT N.NTT_SQ
+                 FROM CM_NTT N
+                WHERE N.BBS_ID = #{bbsId}
+                  AND N.CMPNY_CD = #{cmpnyCd}
+                  AND N.DELETE_FL = 'N'
+                  AND N.USE_FL = 'Y'
+           )
+           AND C.APPROVED_FL = 'N'
+           AND C.USE_FL = 'Y'
+    </update>
+
+    <update id="rejectAllPendingComments" parameterType="map">
+        UPDATE CM_NTT_COMMENT C
+           SET C.USE_FL = 'N'
+             , C.UPDATE_ID = #{updateId}
+             , C.UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE C.NTT_SQ IN (
+               SELECT N.NTT_SQ
+                 FROM CM_NTT N
+                WHERE N.BBS_ID = #{bbsId}
+                  AND N.CMPNY_CD = #{cmpnyCd}
+                  AND N.DELETE_FL = 'N'
+                  AND N.USE_FL = 'Y'
+           )
+           AND C.APPROVED_FL = 'N'
+           AND C.USE_FL = 'Y'
+    </update>
+
+    <update id="updatePopupSetting" parameterType="map">
+        UPDATE CM_NTT_POPUP
+           SET XCNTS = #{xcnts}
+             , YDNTS = #{ydnts}
+             , WIDTH = #{width}
+             , VRTICL = #{vrticl}
+             , START_DT = <choose><when test="startDt != null and startDt != ''">STR_TO_DATE(#{startDt}, '%Y-%m-%d %H:%i:%s')</when><otherwise>NULL</otherwise></choose>
+             , END_DT = <choose><when test="endDt != null and endDt != ''">STR_TO_DATE(#{endDt}, '%Y-%m-%d %H:%i:%s')</when><otherwise>NULL</otherwise></choose>
+             , HIDE_FL = #{hideFl}
+             , USE_FL = #{useFl}
+         WHERE POPUP_SQ = CAST(#{popupSq} AS DECIMAL(30,0))
+           AND NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </update>
+
+    <update id="updatePopupPreviewCounts" parameterType="map">
+        UPDATE CM_NTT
+           SET RD_CNT = (
+                   SELECT COUNT(*)
+                     FROM CM_NTT_VIEW
+                    WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+                      AND BBS_ID = #{bbsId}
+                      AND CMPNY_CD = #{cmpnyCd}
+               )
+             , LIKE_CNT = (
+                   SELECT COUNT(*)
+                     FROM CM_NTT_VOTE
+                    WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+                      AND BBS_ID = #{bbsId}
+                      AND CMPNY_CD = #{cmpnyCd}
+                      AND VOTE_GB = 'L'
+               )
+             , DISLIKE_CNT = (
+                   SELECT COUNT(*)
+                     FROM CM_NTT_VOTE
+                    WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+                      AND BBS_ID = #{bbsId}
+                      AND CMPNY_CD = #{cmpnyCd}
+                      AND VOTE_GB = 'D'
+               )
+             , FAVORITE_CNT = (
+                   SELECT COUNT(*)
+                     FROM CM_NTT_FAVORITE
+                    WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+                      AND BBS_ID = #{bbsId}
+                      AND CMPNY_CD = #{cmpnyCd}
+               )
+         WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </update>
+
+    <insert id="insertPopupPreviewRead" parameterType="map">
+        INSERT IGNORE INTO CM_NTT_VIEW (NTT_SQ, BBS_ID, CMPNY_CD, MBRSH_SQ)
+        SELECT CAST(#{nttSq} AS DECIMAL(30,0)), #{bbsId}, #{cmpnyCd}, M.MBRSH_SQ
+          FROM CM_USER_ORGNZT_MBRSH M
+          INNER JOIN CM_USER U ON U.USER_ID = M.USER_ID
+         WHERE M.CMPNY_CD = #{cmpnyCd}
+           AND M.USER_ID = #{userId}
+           AND M.USE_FL = 'Y'
+         LIMIT 1
+    </insert>
+
+    <insert id="insertPopupPreviewVote" parameterType="map">
+        INSERT IGNORE INTO CM_NTT_VOTE (NTT_SQ, BBS_ID, CMPNY_CD, MBRSH_SQ, VOTE_GB)
+        SELECT CAST(#{nttSq} AS DECIMAL(30,0)), #{bbsId}, #{cmpnyCd}, M.MBRSH_SQ, #{voteGb}
+          FROM CM_USER_ORGNZT_MBRSH M
+          INNER JOIN CM_USER U ON U.USER_ID = M.USER_ID
+         WHERE M.CMPNY_CD = #{cmpnyCd}
+           AND M.USER_ID = #{userId}
+           AND M.USE_FL = 'Y'
+         LIMIT 1
+    </insert>
+
+    <insert id="insertPopupPreviewFavorite" parameterType="map">
+        INSERT IGNORE INTO CM_NTT_FAVORITE (NTT_SQ, BBS_ID, CMPNY_CD, MBRSH_SQ)
+        SELECT CAST(#{nttSq} AS DECIMAL(30,0)), #{bbsId}, #{cmpnyCd}, M.MBRSH_SQ
+          FROM CM_USER_ORGNZT_MBRSH M
+          INNER JOIN CM_USER U ON U.USER_ID = M.USER_ID
+         WHERE M.CMPNY_CD = #{cmpnyCd}
+           AND M.USER_ID = #{userId}
+           AND M.USE_FL = 'Y'
+         LIMIT 1
+    </insert>
+
+    <delete id="deleteBbs" parameterType="map">
+        DELETE FROM CM_BBS
+         WHERE BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </delete>
+
+    <delete id="deleteBbsCategoriesByBoard" parameterType="map">
+        DELETE FROM CM_BBS_CATEGORY
+         WHERE BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </delete>
+
+    <delete id="deleteBbsCategory" parameterType="map">
+        DELETE FROM CM_BBS_CATEGORY
+         WHERE CATEGORY_SQ = CAST(#{categorySq} AS DECIMAL(30,0))
+           AND BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </delete>
+
+    <delete id="deleteBbsAuthorsByBoard" parameterType="map">
+        DELETE FROM CM_BBS_AUTHOR
+         WHERE BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </delete>
+
+    <delete id="deleteBbsAuthor" parameterType="map">
+        DELETE FROM CM_BBS_AUTHOR
+         WHERE AUTHOR_SQ = CAST(#{authorSq} AS DECIMAL(30,0))
+           AND BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </delete>
+
+    <delete id="deletePopupNotice" parameterType="map">
+        DELETE FROM CM_NTT_POPUP
+         WHERE POPUP_SQ = CAST(#{popupSq} AS DECIMAL(30,0))
+           AND NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </delete>
+
+    <select id="countPopupPreviewVote" parameterType="map" resultType="int">
+        SELECT COUNT(*)
+          FROM CM_NTT_VOTE V
+         WHERE V.NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND V.BBS_ID = #{bbsId}
+           AND V.CMPNY_CD = #{cmpnyCd}
+           AND V.VOTE_GB = #{voteGb}
+           AND V.MBRSH_SQ = (
+               SELECT M.MBRSH_SQ
+                 FROM CM_USER_ORGNZT_MBRSH M
+                 INNER JOIN CM_USER U ON U.USER_ID = M.USER_ID
+                WHERE M.CMPNY_CD = #{cmpnyCd}
+                  AND M.USER_ID = #{userId}
+                  AND M.USE_FL = 'Y'
+                LIMIT 1
+           )
+    </select>
+
+    <select id="countPopupPreviewFavorite" parameterType="map" resultType="int">
+        SELECT COUNT(*)
+          FROM CM_NTT_FAVORITE F
+         WHERE F.NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND F.BBS_ID = #{bbsId}
+           AND F.CMPNY_CD = #{cmpnyCd}
+           AND F.MBRSH_SQ = (
+               SELECT M.MBRSH_SQ
+                 FROM CM_USER_ORGNZT_MBRSH M
+                 INNER JOIN CM_USER U ON U.USER_ID = M.USER_ID
+                WHERE M.CMPNY_CD = #{cmpnyCd}
+                  AND M.USER_ID = #{userId}
+                  AND M.USE_FL = 'Y'
+                LIMIT 1
+           )
+    </select>
+
+    <delete id="deletePopupPreviewVote" parameterType="map">
+        DELETE FROM CM_NTT_VOTE
+         WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+           AND VOTE_GB = #{voteGb}
+           AND MBRSH_SQ = (
+               SELECT M.MBRSH_SQ
+                 FROM CM_USER_ORGNZT_MBRSH M
+                 INNER JOIN CM_USER U ON U.USER_ID = M.USER_ID
+                WHERE M.CMPNY_CD = #{cmpnyCd}
+                  AND M.USER_ID = #{userId}
+                  AND M.USE_FL = 'Y'
+                LIMIT 1
+           )
+    </delete>
+
+    <delete id="deletePopupPreviewFavorite" parameterType="map">
+        DELETE FROM CM_NTT_FAVORITE
+         WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+           AND MBRSH_SQ = (
+               SELECT M.MBRSH_SQ
+                 FROM CM_USER_ORGNZT_MBRSH M
+                 INNER JOIN CM_USER U ON U.USER_ID = M.USER_ID
+                WHERE M.CMPNY_CD = #{cmpnyCd}
+                  AND M.USER_ID = #{userId}
+                  AND M.USE_FL = 'Y'
+                LIMIT 1
+           )
+    </delete>
+
+</mapper>

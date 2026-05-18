@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="WidgetStyleMapper">
+
+    <!-- 스타일 유형 공통코드(CMMNCODE.581)는 CmmnCompanyService.selectCodeOption 사용 -->
+    <!-- 화면/DB의 STYLE_TY는 DETAIL_CODE_VALUE. 미리보기 JSON 키는 DETAIL_CODE_ID와 맞추므로 VALUE→ID 조회에 사용 -->
+
+    <select id="selectStyleTyDetailCodeId" parameterType="map" resultType="string">
+        SELECT A.DETAIL_CODE_ID
+          FROM CM_CODE_DETAIL A
+         WHERE A.CODE_ID = 'CMMNCODE.581'
+           AND A.CMPNY_CD = 'CMMN'
+           AND A.DETAIL_CODE_VALUE = #{detailCodeValue}
+           AND A.USE_FL = 'Y'
+         LIMIT 1
+    </select>
+
+    <select id="selectWidgetStyleList" parameterType="map" resultType="tvframework.sit.wgs.dto.WidgetStyleDTO">
+        SELECT STYLE_ID       AS styleId
+             , CMPNY_CD       AS cmpnyCd
+             , STYLE_NAME     AS styleName
+             , STYLE_TY       AS styleTy
+             , USE_FL         AS useFl
+             , DATE_FORMAT(IFNULL(UPDATE_DT, CREATION_DT), '%Y-%m-%d') AS modifyDt
+          FROM CM_WIDGET_STYLE
+         WHERE CMPNY_CD = #{cmpnyCd}
+        <if test="styleTy != null and styleTy != ''">
+           AND STYLE_TY = #{styleTy}
+        </if>
+        <if test="styleName != null and styleName != ''">
+           AND STYLE_NAME LIKE CONCAT('%', #{styleName}, '%')
+        </if>
+         ORDER BY STYLE_ID ASC
+    </select>
+
+    <select id="selectWidgetStyleDetail" parameterType="map" resultType="tvframework.sit.wgs.dto.WidgetStyleDTO">
+        SELECT STYLE_ID       AS styleId
+             , CMPNY_CD       AS cmpnyCd
+             , STYLE_NAME     AS styleName
+             , STYLE_TY       AS styleTy
+             , HTML_TEMPLATE  AS htmlTemplate
+             , CSS_TEMPLATE   AS cssTemplate
+             , JS_TEMPLATE    AS jsTemplate
+             , USE_FL         AS useFl
+             , CREATION_ID    AS creationId
+             , DATE_FORMAT(CREATION_DT, '%Y-%m-%d %H:%i:%s') AS creationDt
+             , UPDATE_ID      AS updateId
+             , DATE_FORMAT(UPDATE_DT, '%Y-%m-%d %H:%i:%s') AS updateDt
+          FROM CM_WIDGET_STYLE
+         WHERE STYLE_ID = #{styleId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </select>
+
+    <!-- 위젯에서 스타일 사용 시 삭제 불가 -->
+    <select id="selectDeletePossibleFlag" parameterType="map" resultType="string">
+        SELECT CASE WHEN COUNT(*) = 0 THEN 'O' ELSE 'X' END
+          FROM CM_WIDGET
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND STYLE_ID = #{styleId}
+    </select>
+
+    <select id="selectNextStyleId" parameterType="map" resultType="string">
+        SELECT CONCAT('STYLE-', LPAD(IFNULL(MAX(CAST(SUBSTRING(STYLE_ID, 7) AS UNSIGNED)), 0) + 1, 5, '0'))
+          FROM CM_WIDGET_STYLE
+         WHERE STYLE_ID REGEXP '^STYLE-[0-9]+$'
+           AND CMPNY_CD = #{cmpnyCd}
+    </select>
+
+    <!-- 동일 유형·회사에서 사용 중인 첫 템플릿 (기본 스타일 불러오기) -->
+    <select id="selectBaseTemplateByStyleTy" parameterType="map" resultType="tvframework.sit.wgs.dto.WidgetStyleDTO">
+        SELECT HTML_TEMPLATE  AS htmlTemplate
+             , CSS_TEMPLATE   AS cssTemplate
+             , JS_TEMPLATE    AS jsTemplate
+          FROM CM_WIDGET_STYLE
+         WHERE STYLE_TY = #{styleTy}
+           AND CMPNY_CD = #{cmpnyCd}
+           AND USE_FL = 'Y'
+         ORDER BY STYLE_ID ASC
+         LIMIT 1
+    </select>
+
+    <insert id="insertWidgetStyle" parameterType="map">
+        INSERT INTO CM_WIDGET_STYLE (
+            STYLE_ID
+          , CMPNY_CD
+          , STYLE_NAME
+          , STYLE_TY
+          , HTML_TEMPLATE
+          , CSS_TEMPLATE
+          , JS_TEMPLATE
+          , USE_FL
+          , CREATION_ID
+          , UPDATE_ID
+        ) VALUES (
+            #{styleId}
+          , #{cmpnyCd}
+          , #{styleName}
+          , #{styleTy}
+          , #{htmlTemplate}
+          , #{cssTemplate}
+          , #{jsTemplate}
+          , #{useFl}
+          , #{creationId}
+          , #{updateId}
+        )
+    </insert>
+
+    <update id="updateWidgetStyle" parameterType="map">
+        UPDATE CM_WIDGET_STYLE
+           SET STYLE_NAME = #{styleName}
+             , STYLE_TY = #{styleTy}
+             , HTML_TEMPLATE = #{htmlTemplate}
+             , CSS_TEMPLATE = #{cssTemplate}
+             , JS_TEMPLATE = #{jsTemplate}
+             , USE_FL = #{useFl}
+             , UPDATE_ID = #{updateId}
+             , UPDATE_DT = NOW()
+         WHERE STYLE_ID = #{styleId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </update>
+
+    <delete id="deleteWidgetStyle" parameterType="map">
+        DELETE FROM CM_WIDGET_STYLE
+         WHERE STYLE_ID = #{styleId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </delete>
+
+</mapper>

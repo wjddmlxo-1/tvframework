@@ -1,0 +1,121 @@
+@startuml class_CDD_CmmnMessage
+title class CDD - CmmnMessage (Multilingual)
+
+class CmmnMessageController <<Controller>> {
+  -cmmnMessageService : CmmnMessageService
+  --
+  +selectMessageList(langGb, cmpnyCd, category, searchCondition, pageIndex, recordCountPerPage) : IntermediateResultVO
+  +selectMessageDetail(langKey, langGb, cmpnyCd) : IntermediateResultVO
+  +insertMessage(requestDTO) : IntermediateResultVO
+  +updateMessage(langKey, requestDTO) : IntermediateResultVO
+  +deleteMessage(requestDTO) : IntermediateResultVO
+  +selectLanguages(cmpnyCd, langCode) : IntermediateResultVO
+  +selectCategories(cmpnyCd, langCode) : IntermediateResultVO
+  +selectCompanyList(loginVO) : IntermediateResultVO
+}
+
+interface CmmnMessageService <<Service>> {
+  +selectMessageList(langGb, cmpnyCd, category, searchCondition, pageIndex, recordCountPerPage) : CmmnMessageListResponseDTO
+  +selectMessageDetail(langKey, langGb, cmpnyCd) : CmmnMessageDetailResponseDTO
+  +insertMessage(requestDTO) : void
+  +updateMessage(langKey, requestDTO) : void
+  +deleteMessage(requestDTO) : void
+  +selectLanguages(cmpnyCd, langCode) : List<CodeOptionDTO>
+  +selectCategories(cmpnyCd, langCode) : List<CodeOptionDTO>
+  +selectCompanyList(loginUserId) : List<CmmnCompanyOptionDTO>
+  +selectCompanyListForLogin() : List<CmmnCompanyOptionDTO>
+}
+
+class CmmnMessageServiceImpl <<ServiceImpl>> {
+  -cmmnMessageMapper : CmmnMessageMapper
+  --
+  +selectMessageList(langGb, cmpnyCd, category, searchCondition, pageIndex, recordCountPerPage) : CmmnMessageListResponseDTO
+  +selectMessageDetail(langKey, langGb, cmpnyCd) : CmmnMessageDetailResponseDTO
+  +insertMessage(requestDTO) : void
+  +updateMessage(langKey, requestDTO) : void
+  +deleteMessage(requestDTO) : void
+  +selectLanguages(cmpnyCd, langCode) : List<CodeOptionDTO>
+  +selectCategories(cmpnyCd, langCode) : List<CodeOptionDTO>
+  +selectCompanyList(loginUserId) : List<CmmnCompanyOptionDTO>
+  +selectCompanyListForLogin() : List<CmmnCompanyOptionDTO>
+}
+
+class CmmnMessageMapper <<Mapper>> {
+  +selectMessageList(params) : List<Map>
+  +selectMessageListCount(params) : Integer
+  +selectMessageDetail(params) : CmmnMessageDetailResponseDTO
+  +insertMessage(params) : void
+  +deleteMessageByLangKey(params) : void
+  +selectMessageDetailMessages(params) : List<MessageDetailDTO>
+  +selectLanguages(params) : List<CodeOptionDTO>
+  +selectCategories(params) : List<CodeOptionDTO>
+  +selectCompanyList(params) : List<CmmnCompanyOptionDTO>
+  +selectCompanyListForLogin() : List<CmmnCompanyOptionDTO>
+  +convertToDTOList(list) : List<CmmnMessageDTO>
+}
+
+class CmmnMessageDTO <<model>> {
+  -langGb : String
+  -langKey : String
+  -messageCns : String
+}
+
+class CmmnMessageRequestDTO <<Dto>> {
+  -cmpnyCd : String
+  -langGb : String
+  -langKey : String
+  -messages : List<MessageRequestItem>
+}
+
+class CmmnMessageDetailResponseDTO <<Dto>> {
+  -langGb : String
+  -langKey : String
+  -messages : List<MessageDetailDTO>
+}
+
+class CmmnMessageListResponseDTO <<Dto>> {
+  -list : List<CmmnMessageDTO>
+  -paginationInfo : PaginationInfo
+}
+
+class CmmnMessageDeleteRequestDTO <<Dto>> {
+  -cmpnyCd : String
+  -langGb : String
+  -langKeys : List<String>
+}
+
+class MessageDetailDTO <<Dto>> {
+  -langCode : String
+  -langName : String
+  -messageCn : String
+}
+
+class CodeOptionDTO <<Dto>> {
+  -code : String
+  -name : String
+}
+
+CmmnMessageController ..> CmmnMessageService : uses
+CmmnMessageController ..> CmmnMessageRequestDTO : uses
+CmmnMessageController ..> CmmnMessageDetailResponseDTO : uses
+CmmnMessageController ..> CmmnMessageListResponseDTO : uses
+CmmnMessageController ..> CmmnMessageDeleteRequestDTO : uses
+
+CmmnMessageServiceImpl ..|> CmmnMessageService : implements
+CmmnMessageServiceImpl ..> CmmnMessageMapper : uses
+CmmnMessageServiceImpl ..> CmmnMessageRequestDTO : uses
+CmmnMessageServiceImpl ..> CmmnMessageDetailResponseDTO : uses
+CmmnMessageServiceImpl ..> CmmnMessageListResponseDTO : uses
+CmmnMessageServiceImpl ..> CmmnMessageDeleteRequestDTO : uses
+CmmnMessageServiceImpl ..> MessageDetailDTO : uses
+
+CmmnMessageMapper ..> CmmnMessageDTO : uses
+CmmnMessageMapper ..> CmmnMessageDetailResponseDTO : uses
+CmmnMessageMapper ..> MessageDetailDTO : uses
+CmmnMessageMapper ..> CodeOptionDTO : uses
+
+@enduml
+
+- **VS Code**: PlantUML 확장 설치 후 `.puml` 파일에서 미리보기(단축키 ALT+D)
+- **온라인**: [PlantUML 서버](https://www.plantuml.com/plantuml/uml/)에 코드 붙여넣기
+- **CLI**: `java -jar plantuml.jar class-diagram-cmmn-message.puml`

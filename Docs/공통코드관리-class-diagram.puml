@@ -1,0 +1,127 @@
+@startuml class_CDD_CmmnCode
+title class CDD - CmmnCode (Common Code)
+
+class CmmnCodeController <<Controller>> {
+  -cmmnCodeService : CmmnCodeService
+  --
+  +selectCodeTree(langGb, cmpnyCd) : IntermediateResultVO
+  +selectCodeDetail(codeId, langGb, cmpnyCd) : IntermediateResultVO
+  +selectCodeDetailList(codeId, langGb, cmpnyCd) : IntermediateResultVO
+  +selectParentCode(codeId, langGb, cmpnyCd) : IntermediateResultVO
+  +insertCode(requestDTO) : IntermediateResultVO
+  +updateCode(codeId, requestDTO) : IntermediateResultVO
+  +deleteCode(codeId, cmpnyCd) : IntermediateResultVO
+  +checkChildren(codeId, cmpnyCd) : IntermediateResultVO
+}
+
+interface CmmnCodeService <<Service>> {
+  +selectCodeTree(langGb, cmpnyCd) : List<CodeTreeDTO>
+  +selectCodeDetail(codeId, langGb, cmpnyCd) : CmmnCodeResponseDTO
+  +selectCodeDetailList(codeId, langGb, cmpnyCd) : List<CodeDetailDTO>
+  +selectParentCode(codeId, langGb, cmpnyCd) : CmmnCodeResponseDTO
+  +insertCode(requestDTO) : void
+  +updateCode(codeId, requestDTO) : void
+  +deleteCode(codeId, cmpnyCd) : void
+  +checkChildren(codeId, cmpnyCd) : String
+}
+
+class CmmnCodeServiceImpl <<ServiceImpl>> {
+  -cmmnCodeMapper : CmmnCodeMapper
+  --
+  +selectCodeTree(langGb, cmpnyCd) : List<CodeTreeDTO>
+  +selectCodeDetail(codeId, langGb, cmpnyCd) : CmmnCodeResponseDTO
+  +selectCodeDetailList(codeId, langGb, cmpnyCd) : List<CodeDetailDTO>
+  +selectParentCode(codeId, langGb, cmpnyCd) : CmmnCodeResponseDTO
+  +insertCode(requestDTO) : void
+  +updateCode(codeId, requestDTO) : void
+  +deleteCode(codeId, cmpnyCd) : void
+  +checkChildren(codeId, cmpnyCd) : String
+  -buildTree(flatList) : List<CodeTreeDTO>
+  -isDuplicateKeyException(t) : boolean
+  -resolveCreationId() : String
+}
+
+class CmmnCodeMapper <<Mapper>> {
+  +selectCodeTree(params) : List<Map>
+  +selectCodeDetail(params) : CmmnCodeResponseDTO
+  +selectCodeDetailList(params) : List<CodeDetailDTO>
+  +selectParentCode(params) : CmmnCodeResponseDTO
+  +insertCode(params) : void
+  +updateCode(params) : void
+  +deleteCode(params) : void
+  +deleteCodeDetail(params) : void
+  +insertCodeDetail(params) : void
+  +checkChildren(params) : String
+}
+
+class CmmnCodeRequestDTO <<Dto>> {
+  -cmpnyCd : String
+  -codeId : String
+  -upperCodeId : String
+  -useFl : String
+  -codeCn : String
+  -codeName : String
+  -codeLangKey : String
+  -codeDetailList : List<CodeDetailDTO>
+}
+
+class CmmnCodeResponseDTO <<Dto>> {
+  -upperCodeId : String
+  -upperCodeName : String
+  -codeId : String
+  -codeName : String
+  -useFl : String
+  -codeCn : String
+  -codeLangKey : String
+}
+
+class CodeTreeDTO <<Dto>> {
+  -codeId : String
+  -name : String
+  -upperCodeId : String
+  -useFl : String
+  -path : String
+  -level : Integer
+  -children : List<CodeTreeDTO>
+}
+
+class CodeDetailDTO <<Dto>> {
+  -codeId : String
+  -detailCodeId : String
+  -detailCodeValue : String
+  -codeLangKey : String
+  -codeName : String
+  -sortingSq : Integer
+  -useFl : String
+}
+
+class CmmnCodeDuplicateKeyException <<Exception>> {
+  -duplicateKey : String
+  -duplicateDetailIndex : Integer
+  +getDuplicateKey() : String
+  +getDuplicateDetailIndex() : Integer
+}
+
+CmmnCodeController ..> CmmnCodeService : uses
+CmmnCodeController ..> CmmnCodeRequestDTO : uses
+CmmnCodeController ..> CmmnCodeResponseDTO : uses
+CmmnCodeController ..> CodeTreeDTO : uses
+CmmnCodeController ..> CodeDetailDTO : uses
+CmmnCodeController ..> CmmnCodeDuplicateKeyException : catch
+
+CmmnCodeServiceImpl ..|> CmmnCodeService : implements
+CmmnCodeServiceImpl ..> CmmnCodeMapper : uses
+CmmnCodeServiceImpl ..> CmmnCodeRequestDTO : uses
+CmmnCodeServiceImpl ..> CmmnCodeResponseDTO : uses
+CmmnCodeServiceImpl ..> CodeTreeDTO : uses
+CmmnCodeServiceImpl ..> CodeDetailDTO : uses
+CmmnCodeServiceImpl ..> CmmnCodeDuplicateKeyException : throws
+
+CmmnCodeMapper ..> CmmnCodeResponseDTO : uses
+CmmnCodeMapper ..> CodeDetailDTO : uses
+
+@enduml
+
+' **VS Code**: PlantUML 확장 설치 후 `.puml` 파일에서 미리보기(단축키 ALT+D)
+' **온라인**: [PlantUML 서버](https://www.plantuml.com/plantuml/uml/)에 코드 붙여넣기
+' **CLI**: `java -jar plantuml.jar 공통코드관리-class-diagram.puml`

@@ -1,0 +1,1334 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<!--
+  ====================================================================================
+  사용자 게시판(MyBatis) — BbsUserMapper
+  ====================================================================================
+  [제공하신 3개 쿼리와 현재 구현의 차이 요약]
+
+  1) 사용자 게시판 권한
+     - 제공 쿼리: 특정 게시판(BBS_ID)에 대해 WITH MBRSH/DEPT로 소속·부서 트리를 구성하고,
+       USER/GROUP/DEPT/ROLE별 CM_BBS_AUTHOR 행을 UNION 후 MAX로 READING/WRITING/REPLY/MANAGER 플래그 집계.
+     - ROLE 분기: (WRITING_FL = 'Y' OR MANAGER_FL = 'Y') 조건이 있음.
+     - 현재 구현: 게시판별 "열람 가능 여부"만 EXISTS로 판단(bbsUserReadableSql).
+       · READING_FL = 'Y' 인 권한 행만 열람으로 간주(ROLE도 동일 — 제공 쿼리의 ROLE 조건과 다를 수 있음).
+       · 부서는 CM_USER_ORGNZT_MBRSH.DEPT_CD 한 건만 사용. 제공 쿼리의 DEPT CTE(CM_DEPT DPRLR_ID 연쇄) 미반영.
+       · USER 타깃은 MBRSH_SQ 또는 USER_ID 둘 다 매칭(기존 호환).
+       · 별도 API로 WRITING/REPLY/MANAGER 집계 결과를 반환하지 않음.
+
+  2) 게시판 리스트
+     - 제공 쿼리: 전체글 행(BBS_ALL), CM_NTT_VIEW 기반 미열람/전체 건수, VALID_FROM/VALID_TO,
+       게시판 목록 권한은 GREATEST(READING,WRITING,REPLY,MANAGER) 후 READING_FL='Y' 필터,
+       ROLE은 (WRITING='Y' OR MANAGER='Y') 인 행만 UNION에 포함.
+     - 현재 구현: bbsUserReadableSql과 동일한 "열람" 기준, 전체글은 프론트에서 bbsId 미지정으로 처리,
+       건수는 단순 COUNT만, unreadCount=0 고정, 게시판 유효기간(VALID_*) 미적용, BBS_ALL 행 없음.
+
+  3) 게시글 리스트
+     - 제공 쿼리: 공지(NOTICE) 먼저 UNION 일반글, RESVE_DT/EXPIRY_DT, NTT_STTUS, LEFT(CONTENTS,TITLE_LENGTH),
+       프로필 FILE_DATA 등.
+     - 현재 구현: 공지/일반 분리 없이 단일 SELECT, 예약/만료일 미적용, 스니펫은 본문 180자 전처리,
+       다중 게시판 IN + 페이징(LIMIT/OFFSET)은 서비스에서 접근 가능 BBS_ID 목록으로 제한.
+
+  위 차이를 줄이려면: DTO/서비스 시그니처와 함께 쿼리를 제공 스펙에 맞게 단계적 교체하는 것이 좋습니다.
+  ====================================================================================
+-->
+<mapper namespace="tvframework.man.service.impl.BbsUserMapper">
+
+    <!--
+      [selectUserOrgMembership]
+      로그인 사용자의 회사 소속 1건: MBRSH_SQ(문자), DEPT_CD
+      이후 권한 EXISTS에서 mbrshSq / deptCd / userId 바인딩에 사용.
+      (제공 쿼리의 MBRSH CTE와 유사하나, 다건 MBRSH·DEPT 확장은 하지 않음 — LIMIT 1)
+    -->
+    <select id="selectUserOrgMembership" parameterType="map" resultType="tvframework.man.dto.BbsUserOrgDTO">
+        SELECT CAST(M.MBRSH_SQ AS CHAR) AS mbrshSq
+             , M.DEPT_CD AS deptCd
+          FROM CM_USER_ORGNZT_MBRSH M
+         WHERE M.CMPNY_CD = #{cmpnyCd}
+           AND M.USER_ID = #{userId}
+           AND M.USE_FL = 'Y'
+         ORDER BY M.MBRSH_SQ ASC
+         LIMIT 1
+    </select>
+
+    <!-- CM_BBS_AUTHOR: 현재 사용자에 매칭되는 행 (열람 EXISTS / 권한 플래그 집계 공통) -->
+    <sql id="bbsUserAuthorMatchInner">
+               (
+                     (A.TARGET_TY COLLATE utf8mb4_unicode_ci = CONVERT('USER' USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                      AND GREATEST(
+                            IFNULL(A.READING_FL, 'N'),
+                            IFNULL(A.WRITING_FL, 'N'),
+                            IFNULL(A.REPLY_FL, 'N'),
+                            IFNULL(A.MANAGER_FL, 'N')
+                          ) COLLATE utf8mb4_unicode_ci = CONVERT('Y' USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                      AND (A.TARGET_CD COLLATE utf8mb4_unicode_ci = CAST(#{mbrshSq} AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                           OR A.TARGET_CD COLLATE utf8mb4_unicode_ci = CAST(#{userId} AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci))
+                  OR (A.TARGET_TY COLLATE utf8mb4_unicode_ci = CONVERT('DEPT' USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                      AND GREATEST(
+                            IFNULL(A.READING_FL, 'N'),
+                            IFNULL(A.WRITING_FL, 'N'),
+                            IFNULL(A.REPLY_FL, 'N'),
+                            IFNULL(A.MANAGER_FL, 'N')
+                          ) COLLATE utf8mb4_unicode_ci = CONVERT('Y' USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                      AND A.TARGET_CD COLLATE utf8mb4_unicode_ci IN (
+                            SELECT CAST(M.DEPT_CD AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                              FROM CM_USER_ORGNZT_MBRSH M
+                             WHERE M.CMPNY_CD COLLATE utf8mb4_unicode_ci = CAST(#{cmpnyCd} AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                               AND M.USER_ID COLLATE utf8mb4_unicode_ci = CAST(#{userId} AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                               AND M.USE_FL COLLATE utf8mb4_unicode_ci = CONVERT('Y' USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                            UNION
+                            SELECT CAST(D.DEPT_CD AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                              FROM CM_DEPT D
+                             WHERE D.CMPNY_CD COLLATE utf8mb4_unicode_ci = CAST(#{cmpnyCd} AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                               AND D.DPRLR_ID = CAST(#{mbrshSq} AS DECIMAL(30, 0))
+                      ))
+                  OR (A.TARGET_TY COLLATE utf8mb4_unicode_ci = CONVERT('GROUP' USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                      AND GREATEST(
+                            IFNULL(A.READING_FL, 'N'),
+                            IFNULL(A.WRITING_FL, 'N'),
+                            IFNULL(A.REPLY_FL, 'N'),
+                            IFNULL(A.MANAGER_FL, 'N')
+                          ) COLLATE utf8mb4_unicode_ci = CONVERT('Y' USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                      AND EXISTS (
+                          SELECT 1
+                            FROM CM_GROUP_USER GU
+                           WHERE GU.CMPNY_CD COLLATE utf8mb4_unicode_ci = CAST(#{cmpnyCd} AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                             AND GU.GROUP_ID COLLATE utf8mb4_unicode_ci = A.TARGET_CD COLLATE utf8mb4_unicode_ci
+                             AND GU.MBRSH_SQ = CAST(#{mbrshSq} AS DECIMAL(30, 0))
+                             AND GU.USE_FL COLLATE utf8mb4_unicode_ci = CONVERT('Y' USING utf8mb4) COLLATE utf8mb4_unicode_ci))
+                  OR (A.TARGET_TY COLLATE utf8mb4_unicode_ci = CONVERT('ROLE' USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                      AND (IFNULL(A.WRITING_FL, 'N') COLLATE utf8mb4_unicode_ci = CONVERT('Y' USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                           OR IFNULL(A.MANAGER_FL, 'N') COLLATE utf8mb4_unicode_ci = CONVERT('Y' USING utf8mb4) COLLATE utf8mb4_unicode_ci)
+                      AND EXISTS (
+                          SELECT 1
+                            FROM CM_AUTHOR_USER AU
+                           WHERE AU.CMPNY_CD COLLATE utf8mb4_unicode_ci = CAST(#{cmpnyCd} AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci
+                             AND AU.AUTHOR_CD COLLATE utf8mb4_unicode_ci = A.TARGET_CD COLLATE utf8mb4_unicode_ci
+                             AND (
+                                   (AU.USER_TY COLLATE utf8mb4_unicode_ci = CONVERT('USER' USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                                    AND AU.USER_CD COLLATE utf8mb4_unicode_ci = CAST(#{mbrshSq} AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_unicode_ci)
+                                OR (AU.USER_TY COLLATE utf8mb4_unicode_ci = CONVERT('GROUP' USING utf8mb4) COLLATE utf8mb4_unicode_ci
+                                    AND EXISTS (
+                                        SELECT 1
+                                          FROM CM_GROUP_USER GU2
+                                         WHERE GU2.CMPNY_CD COLLATE utf8mb4_unicode_ci = AU.CMPNY_CD COLLATE utf8mb4_unicode_ci
+                                           AND GU2.GROUP_ID COLLATE utf8mb4_unicode_ci = AU.USER_CD COLLATE utf8mb4_unicode_ci
+                                           AND GU2.MBRSH_SQ = CAST(#{mbrshSq} AS DECIMAL(30, 0))
+                                           AND GU2.USE_FL COLLATE utf8mb4_unicode_ci = CONVERT('Y' USING utf8mb4) COLLATE utf8mb4_unicode_ci))
+                                 )
+                          ))
+               )
+    </sql>
+
+    <!--
+      [bbsUserReadableSql]
+      CM_BBS B 별칭이 있는 SELECT의 WHERE 절에 포함: "이 사용자가 이 게시판을 열람할 수 있는가" (AND EXISTS …)
+
+      USER   : TARGET_CD = MBRSH_SQ 또는 USER_ID (READ/WRITE/REPLY/MANAGER 중 하나라도 Y면 열람 가능)
+      DEPT   : 본인 DEPT_CD + 하위 1단계(CM_DEPT.DPRLR_ID = MBRSH_SQ) 대상
+      GROUP  : CM_GROUP_USER 에 소속된 그룹 대상
+      ROLE   : 제공 설계와 동일하게 WRITING_FL='Y' 또는 MANAGER_FL='Y' 인 ROLE 권한만 열람 허용
+    -->
+    <sql id="bbsUserReadableSql">
+        AND EXISTS (
+            SELECT 1
+              FROM CM_BBS_AUTHOR A
+             WHERE A.BBS_ID = B.BBS_ID
+               AND A.CMPNY_CD = B.CMPNY_CD
+               AND <include refid="bbsUserAuthorMatchInner"/>
+        )
+    </sql>
+
+    <!-- 게시판별 권한 플래그(매칭 행 중 하나라도 Y면 Y) — 상세 화면 버튼 노출용 -->
+    <select id="selectBbsAuthorAggFlags" parameterType="map" resultType="tvframework.man.dto.BbsUserBoardPermDTO">
+        SELECT CASE WHEN IFNULL(SUM(CASE WHEN IFNULL(A.READING_FL, 'N') = 'Y' THEN 1 ELSE 0 END), 0) &gt; 0 THEN 'Y' ELSE 'N' END AS permReadingFl
+             , CASE WHEN IFNULL(SUM(CASE WHEN IFNULL(A.WRITING_FL, 'N') = 'Y' THEN 1 ELSE 0 END), 0) &gt; 0 THEN 'Y' ELSE 'N' END AS permWritingFl
+             , CASE WHEN IFNULL(SUM(CASE WHEN IFNULL(A.REPLY_FL, 'N') = 'Y' THEN 1 ELSE 0 END), 0) &gt; 0 THEN 'Y' ELSE 'N' END AS permReplyFl
+             , CASE WHEN IFNULL(SUM(CASE WHEN IFNULL(A.MANAGER_FL, 'N') = 'Y' THEN 1 ELSE 0 END), 0) &gt; 0 THEN 'Y' ELSE 'N' END AS permManagerFl
+          FROM CM_BBS_AUTHOR A
+         WHERE A.CMPNY_CD = #{cmpnyCd}
+           AND A.BBS_ID = #{bbsId}
+           AND <include refid="bbsUserAuthorMatchInner"/>
+    </select>
+
+    <!-- 열람 가능한 게시판 ID 목록 (정렬은 게시판 마스터 순서) -->
+    <select id="selectAccessibleBbsIds" parameterType="map" resultType="java.lang.String">
+        SELECT B.BBS_ID
+          FROM CM_BBS B
+         WHERE B.CMPNY_CD = #{cmpnyCd}
+           AND B.USE_FL = 'Y'
+           <include refid="bbsUserReadableSql"/>
+         ORDER BY B.SORTING_SQ ASC, B.BBS_ID ASC
+    </select>
+
+    <!--
+      [selectBoardsForUser]
+      열람 가능 게시판 + 전체건수/미열람건수.
+      - 전체건수: CM_NTT(삭제N/사용Y/예약·만료 유효)
+      - 미열람건수: CM_NTT_VIEW 기준 NOT READ
+      - 게시판 유효기간(VALID_FROM/VALID_TO) 적용
+    -->
+    <select id="selectBoardsForUser" parameterType="map" resultType="tvframework.man.dto.BbsUserBoardDTO">
+        SELECT B.BBS_ID AS bbsId
+             , B.BBS_NM_KEY AS bbsNmKey
+             , IFNULL(ML.MESSAGE_CN, B.BBS_ID) AS bbsName
+             , B.BBS_TY AS bbsTy
+             , IFNULL(B.LAYOUT_TY, 'LIST') AS layoutTy
+             , B.SORTING_SQ AS sortingSq
+             , (SELECT COUNT(*)
+                  FROM CM_NTT N
+                 WHERE N.BBS_ID = B.BBS_ID
+                   AND N.CMPNY_CD = B.CMPNY_CD
+                   AND N.DELETE_FL = 'N'
+                   AND IFNULL(N.USE_FL, 'Y') = 'Y'
+                   AND (N.RESVE_DT IS NULL OR N.RESVE_DT &lt;= NOW())
+                   AND (N.EXPIRY_DT IS NULL OR N.EXPIRY_DT &gt;= NOW())) AS postCount
+             , (SELECT COUNT(*)
+                  FROM CM_NTT N
+                  LEFT JOIN CM_NTT_VIEW V
+                    ON V.NTT_SQ = N.NTT_SQ
+                   AND V.BBS_ID = N.BBS_ID
+                   AND V.CMPNY_CD = N.CMPNY_CD
+                   AND V.MBRSH_SQ = CAST(#{mbrshSq} AS DECIMAL(30, 0))
+                 WHERE N.BBS_ID = B.BBS_ID
+                   AND N.CMPNY_CD = B.CMPNY_CD
+                   AND N.DELETE_FL = 'N'
+                   AND IFNULL(N.USE_FL, 'Y') = 'Y'
+                   AND (N.RESVE_DT IS NULL OR N.RESVE_DT &lt;= NOW())
+                   AND (N.EXPIRY_DT IS NULL OR N.EXPIRY_DT &gt;= NOW())
+                   AND V.NTT_SQ IS NULL) AS unreadCount
+          FROM CM_BBS B
+          LEFT JOIN CM_MESSAGE_LANG ML
+            ON ML.LANG_KEY = B.BBS_NM_KEY
+           AND ML.LANG_CODE = #{languageCode}
+           AND ML.CMPNY_CD = B.CMPNY_CD
+         WHERE B.CMPNY_CD = #{cmpnyCd}
+           AND B.USE_FL = 'Y'
+           AND (B.VALID_FROM IS NULL OR B.VALID_FROM &lt;= NOW())
+           AND (B.VALID_TO   IS NULL OR B.VALID_TO   &gt;= NOW())
+           <include refid="bbsUserReadableSql"/>
+         ORDER BY B.SORTING_SQ ASC, B.BBS_ID ASC
+    </select>
+
+    <select id="selectBbsLayoutTy" parameterType="map" resultType="java.lang.String">
+        SELECT IFNULL(BB.LAYOUT_TY, 'LIST')
+          FROM CM_BBS BB
+         WHERE BB.CMPNY_CD = #{cmpnyCd}
+           AND BB.BBS_ID = #{bbsId}
+         LIMIT 1
+    </select>
+
+    <!-- CM_BBS 기능 플래그(관리자 설정과 동일) -->
+    <select id="selectBbsFeatureFlags" parameterType="map" resultType="tvframework.man.dto.BbsUserBbsFeaturesDTO">
+        SELECT IFNULL(BB.REPLY_FL, 'N') AS replyFl
+             , IFNULL(BB.COMMENT_FL, 'N') AS commentFl
+             , IFNULL(BB.LIKE_FL, 'N') AS likeFl
+             , IFNULL(BB.DISLIKE_FL, 'N') AS dislikeFl
+             , IFNULL(BB.ATCHMNFL_FL, 'N') AS atchmnflFl
+             , IFNULL(BB.NOTICE_FL, 'N') AS noticeFl
+             , IFNULL(BB.ENFRC_SECRET_FL, 'N') AS enfrcSecretFl
+             , IFNULL(BB.ANONYMOUS_FL, 'N') AS anonymousFl
+             , IFNULL(BB.RESVE_FL, 'N') AS resveFl
+             , IFNULL(BB.CATEGORY_FL, 'N') AS categoryFl
+             , IFNULL(BB.COMMENT_CONFM_FL, 'N') AS commentConfmFl
+          FROM CM_BBS BB
+         WHERE BB.CMPNY_CD = #{cmpnyCd}
+           AND BB.BBS_ID = #{bbsId}
+         LIMIT 1
+    </select>
+
+    <select id="countImageFilesAmongSqs" parameterType="map" resultType="int">
+        SELECT COUNT(*)
+          FROM CM_FILE F
+         WHERE F.FILE_TY = 'BBS'
+           AND IFNULL(F.USE_FL, 'Y') = 'Y'
+           AND LOWER(IFNULL(F.MIME_TY, '')) LIKE 'image/%'
+           AND F.FILE_SQ IN
+        <foreach collection="fileSqs" item="fsq" open="(" separator="," close=")">
+            CAST(#{fsq} AS DECIMAL(30,0))
+        </foreach>
+    </select>
+
+    <!-- 게시판 카테고리 목록 -->
+    <select id="selectCategoriesForUser" parameterType="map" resultType="tvframework.man.dto.BbsUserCategoryDTO">
+        SELECT CAST(A.CATEGORY_SQ AS CHAR) AS categorySq
+             , A.CATEGORY_NM AS categoryNm
+             , A.SORTING_SQ AS sortingSq
+          FROM CM_BBS_CATEGORY A
+         WHERE A.CMPNY_CD = #{cmpnyCd}
+           AND A.BBS_ID = #{bbsId}
+         ORDER BY A.SORTING_SQ ASC
+    </select>
+
+    <!-- 사용자 게시글 등록(CM_NTT) -->
+    <select id="selectPostThreadInfo" parameterType="map" resultType="map">
+        SELECT CAST(A.GROUP_NO AS CHAR) AS groupNo
+             , IFNULL(A.ORDER_NO, 0) AS orderNo
+             , IFNULL(A.DEPTH, 0) AS depth
+          FROM CM_NTT A
+         WHERE A.CMPNY_CD = #{cmpnyCd}
+           AND A.BBS_ID = #{bbsId}
+           AND A.NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND A.DELETE_FL = 'N'
+           AND IFNULL(A.USE_FL, 'Y') = 'Y'
+         LIMIT 1
+    </select>
+
+    <select id="selectMaxPostOrderNoByGroup" parameterType="map" resultType="int">
+        SELECT IFNULL(MAX(IFNULL(A.ORDER_NO, 0)), 0)
+          FROM CM_NTT A
+         WHERE A.CMPNY_CD = #{cmpnyCd}
+           AND A.BBS_ID = #{bbsId}
+           AND A.GROUP_NO = CAST(#{groupNo} AS DECIMAL(30,0))
+           AND A.DELETE_FL = 'N'
+           AND IFNULL(A.USE_FL, 'Y') = 'Y'
+    </select>
+
+    <insert id="insertPost" parameterType="map">
+        INSERT INTO CM_NTT (
+            NTT_SQ, BBS_ID, CMPNY_CD, CATEGORY_SQ, TITLE, CONTENTS,
+            NTT_TY, NTT_STTUS, RESVE_DT, EXPIRY_DT, DELETE_FL, USE_FL,
+            RD_CNT, LIKE_CNT, DISLIKE_CNT, FAVORITE_CNT,
+            CREATION_ID, CREATION_DT, UPDATE_ID, UPDATE_DT,
+            GROUP_NO, ORDER_NO, DEPTH
+        ) VALUES (
+            CAST(#{nttSq} AS DECIMAL(30,0)),
+            #{bbsId},
+            #{cmpnyCd},
+            <choose>
+                <when test="categorySq != null and categorySq != ''">CAST(#{categorySq} AS DECIMAL(30,0))</when>
+                <otherwise>NULL</otherwise>
+            </choose>,
+            #{title},
+            #{contents},
+            <choose>
+                <!-- OGNL의 == 는 Y/N 문자열 비교 시 숫자 변환을 시도해 NumberFormatException 발생할 수 있음 -->
+                <when test='"Y".equals(noticeAt)'>'NOTICE'</when>
+                <otherwise>'NORMAL'</otherwise>
+            </choose>,
+            <choose>
+                <when test='"SECRET".equalsIgnoreCase(nttSttus)'>'SECRET'</when>
+                <otherwise>'PUBLIC'</otherwise>
+            </choose>,
+            <choose>
+                <when test="ntceBgnde != null and ntceBgnde != ''">STR_TO_DATE(#{ntceBgnde}, '%Y%m%d%H%i%s')</when>
+                <otherwise>NULL</otherwise>
+            </choose>,
+            <choose>
+                <when test="ntceEndde != null and ntceEndde != ''">STR_TO_DATE(#{ntceEndde}, '%Y%m%d%H%i%s')</when>
+                <otherwise>NULL</otherwise>
+            </choose>,
+            'N', 'Y',
+            0, 0, 0, 0,
+            #{creationId}, NOW(), #{updateId}, NOW(),
+            CAST(#{groupNo} AS DECIMAL(30,0)),
+            IFNULL(#{orderNo}, 0),
+            IFNULL(#{depth}, 0)
+        )
+    </insert>
+
+    <insert id="insertCmFilePostData" parameterType="map">
+        INSERT INTO CM_FILE (
+            FILE_SQ
+          , FILE_TY
+          , FILE_NM
+          , SAVE_TY
+          , MIME_TY
+          , FILE_EXT
+          , FILE_PATH
+          , FILE_DATA
+          , FILE_SIZE
+          , USE_FL
+          , CREATION_ID
+          , UPDATE_ID
+        ) VALUES (
+            CAST(#{fileSq} AS DECIMAL(30,0))
+          , 'BBS'
+          , #{fileNm}
+          , 'DATA'
+          , #{mimeTy}
+          , #{fileExt}
+          , NULL
+          , #{fileData, jdbcType=BLOB}
+          , #{fileSize}
+          , 'Y'
+          , #{creationId}
+          , #{updateId}
+        )
+    </insert>
+
+    <select id="selectCmFilePostData" parameterType="map" resultType="tvframework.man.dto.BbsUserFileBinaryDTO">
+        SELECT FILE_DATA AS fileData
+             , MIME_TY AS mimeTy
+          FROM CM_FILE
+         WHERE FILE_SQ = CAST(#{fileSq} AS DECIMAL(30,0))
+           AND FILE_TY = 'BBS'
+           AND FILE_DATA IS NOT NULL
+    </select>
+
+    <insert id="insertCmFileCommentData" parameterType="map">
+        INSERT INTO CM_FILE (
+            FILE_SQ
+          , FILE_TY
+          , FILE_NM
+          , SAVE_TY
+          , MIME_TY
+          , FILE_EXT
+          , FILE_PATH
+          , FILE_DATA
+          , FILE_SIZE
+          , USE_FL
+          , CREATION_ID
+          , UPDATE_ID
+        ) VALUES (
+            CAST(#{fileSq} AS DECIMAL(30,0))
+          , 'BBS_CMT'
+          , #{fileNm}
+          , 'DATA'
+          , #{mimeTy}
+          , #{fileExt}
+          , NULL
+          , #{fileData, jdbcType=BLOB}
+          , #{fileSize}
+          , 'Y'
+          , #{creationId}
+          , #{updateId}
+        )
+    </insert>
+
+    <select id="selectCmFileCommentData" parameterType="map" resultType="tvframework.man.dto.BbsUserFileBinaryDTO">
+        SELECT FILE_DATA AS fileData
+             , MIME_TY AS mimeTy
+          FROM CM_FILE
+         WHERE FILE_SQ = CAST(#{fileSq} AS DECIMAL(30,0))
+           AND FILE_TY = 'BBS_CMT'
+           AND FILE_DATA IS NOT NULL
+    </select>
+
+    <!-- 프로필 이미지(CM_USER.FILE_SQ): 신규는 FILE_TY=PROFILE, 구버전은 게시글 업로드(BBS)로 저장된 행 호환 -->
+    <insert id="insertCmFileProfileData" parameterType="map">
+        INSERT INTO CM_FILE (
+            FILE_SQ
+          , FILE_TY
+          , FILE_NM
+          , SAVE_TY
+          , MIME_TY
+          , FILE_EXT
+          , FILE_PATH
+          , FILE_DATA
+          , FILE_SIZE
+          , USE_FL
+          , CREATION_ID
+          , UPDATE_ID
+        ) VALUES (
+            CAST(#{fileSq} AS DECIMAL(30,0))
+          , 'PROFILE'
+          , #{fileNm}
+          , 'DATA'
+          , #{mimeTy}
+          , #{fileExt}
+          , NULL
+          , #{fileData, jdbcType=BLOB}
+          , #{fileSize}
+          , 'Y'
+          , #{creationId}
+          , #{updateId}
+        )
+    </insert>
+
+    <select id="selectCmFileProfileData" parameterType="map" resultType="tvframework.man.dto.BbsUserFileBinaryDTO">
+        SELECT F.FILE_DATA AS fileData
+             , F.MIME_TY AS mimeTy
+          FROM CM_FILE F
+         WHERE F.FILE_SQ = CAST(#{fileSq} AS DECIMAL(30,0))
+           AND IFNULL(F.USE_FL, 'Y') = 'Y'
+           AND F.FILE_DATA IS NOT NULL
+           AND F.FILE_TY IN ('PROFILE', 'BBS')
+         ORDER BY CASE WHEN F.FILE_TY = 'PROFILE' THEN 0 ELSE 1 END, F.UPDATE_DT DESC, F.CREATION_DT DESC
+         LIMIT 1
+    </select>
+
+    <update id="updateCommentFilesRefSq" parameterType="map">
+        UPDATE CM_FILE
+           SET REFER_SQ = CAST(#{commentSq} AS DECIMAL(30,0))
+             , UPDATE_ID = #{updateId}
+         WHERE FILE_SQ IN
+         <foreach collection="fileSqs" item="fsq" open="(" separator="," close=")">
+            CAST(#{fsq} AS DECIMAL(30,0))
+         </foreach>
+           AND FILE_TY = 'BBS_CMT'
+           AND SAVE_TY = 'DATA'
+           AND IFNULL(USE_FL, 'Y') = 'Y'
+    </update>
+
+    <select id="selectCommentAttachmentsForNtt" parameterType="map" resultType="tvframework.man.dto.BbsUserCommentAttachmentRowDTO">
+        SELECT CAST(F.REFER_SQ AS CHAR) AS commentSq
+             , CAST(F.FILE_SQ AS CHAR) AS fileSq
+             , F.MIME_TY AS mimeTy
+          FROM CM_FILE F
+         WHERE F.FILE_TY = 'BBS_CMT'
+           AND F.SAVE_TY = 'DATA'
+           AND IFNULL(F.USE_FL, 'Y') = 'Y'
+           AND F.REFER_SQ IN (
+               SELECT CC.COMMENT_SQ
+                 FROM CM_NTT_COMMENT CC
+                WHERE CC.CMPNY_CD = #{cmpnyCd}
+                  AND CC.BBS_ID = #{bbsId}
+                  AND CC.NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+                  AND CC.USE_FL = 'Y'
+           )
+         ORDER BY F.REFER_SQ ASC, F.FILE_SQ ASC
+    </select>
+
+    <select id="countImageCommentFilesAmongSqs" parameterType="map" resultType="int">
+        SELECT COUNT(*)
+          FROM CM_FILE F
+         WHERE F.FILE_TY = 'BBS_CMT'
+           AND IFNULL(F.USE_FL, 'Y') = 'Y'
+           AND LOWER(IFNULL(F.MIME_TY, '')) LIKE 'image/%'
+           AND F.FILE_SQ IN
+        <foreach collection="fileSqs" item="fsq" open="(" separator="," close=")">
+            CAST(#{fsq} AS DECIMAL(30,0))
+        </foreach>
+    </select>
+
+    <select id="sumCommentFileBytesAmongSqs" parameterType="map" resultType="long">
+        SELECT IFNULL(SUM(F.FILE_SIZE), 0)
+          FROM CM_FILE F
+         WHERE F.FILE_TY = 'BBS_CMT'
+           AND IFNULL(F.USE_FL, 'Y') = 'Y'
+           AND F.FILE_SQ IN
+        <foreach collection="fileSqs" item="fsq" open="(" separator="," close=")">
+            CAST(#{fsq} AS DECIMAL(30,0))
+        </foreach>
+    </select>
+
+    <update id="softDeleteCommentFilesForComment" parameterType="map">
+        UPDATE CM_FILE
+           SET USE_FL = 'N'
+             , UPDATE_ID = #{updateId}
+         WHERE FILE_TY = 'BBS_CMT'
+           AND SAVE_TY = 'DATA'
+           AND REFER_SQ = CAST(#{commentSq} AS DECIMAL(30,0))
+    </update>
+
+    <!-- 댓글에 이미 붙어 있던 파일 중, 새 목록에 없는 것만 소프트 삭제(유지 첨부는 USE_FL 유지) -->
+    <update id="softDeleteCommentFilesForCommentNotIn" parameterType="map">
+        UPDATE CM_FILE
+           SET USE_FL = 'N'
+             , UPDATE_ID = #{updateId}
+         WHERE FILE_TY = 'BBS_CMT'
+           AND SAVE_TY = 'DATA'
+           AND IFNULL(USE_FL, 'Y') = 'Y'
+           AND REFER_SQ = CAST(#{commentSq} AS DECIMAL(30,0))
+           AND FILE_SQ NOT IN
+        <foreach collection="fileSqs" item="fsq" open="(" separator="," close=")">
+            CAST(#{fsq} AS DECIMAL(30,0))
+        </foreach>
+    </update>
+
+    <update id="updatePostFilesRefSq" parameterType="map">
+        UPDATE CM_FILE
+           SET REFER_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+             , UPDATE_ID = #{updateId}
+         WHERE FILE_SQ IN
+         <foreach collection="fileSqs" item="fsq" open="(" separator="," close=")">
+            CAST(#{fsq} AS DECIMAL(30,0))
+         </foreach>
+           AND FILE_TY = 'BBS'
+           AND SAVE_TY = 'DATA'
+           AND IFNULL(USE_FL, 'Y') = 'Y'
+    </update>
+
+    <!-- 게시글 첨부 전체 제거(수정 시 첨부 0건 저장) -->
+    <update id="softDeletePostFilesForPost" parameterType="map">
+        UPDATE CM_FILE
+           SET USE_FL = 'N'
+             , UPDATE_ID = #{updateId}
+         WHERE FILE_TY = 'BBS'
+           AND SAVE_TY = 'DATA'
+           AND IFNULL(USE_FL, 'Y') = 'Y'
+           AND REFER_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+    </update>
+
+    <!-- 게시글에 이미 붙어 있던 파일 중, 새 목록에 없는 것만 소프트 삭제 -->
+    <update id="softDeletePostFilesForPostNotIn" parameterType="map">
+        UPDATE CM_FILE
+           SET USE_FL = 'N'
+             , UPDATE_ID = #{updateId}
+         WHERE FILE_TY = 'BBS'
+           AND SAVE_TY = 'DATA'
+           AND IFNULL(USE_FL, 'Y') = 'Y'
+           AND REFER_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND FILE_SQ NOT IN
+        <foreach collection="fileSqs" item="fsq" open="(" separator="," close=")">
+            CAST(#{fsq} AS DECIMAL(30,0))
+        </foreach>
+    </update>
+
+    <select id="selectPostFiles" parameterType="map" resultType="tvframework.man.dto.BbsUserPostFileDTO">
+        SELECT CAST(F.FILE_SQ AS CHAR) AS fileSq
+             , F.FILE_NM AS fileNm
+             , F.MIME_TY AS mimeTy
+             , F.FILE_SIZE AS fileSize
+          FROM CM_FILE F
+         WHERE F.FILE_TY = 'BBS'
+           AND F.SAVE_TY = 'DATA'
+           AND IFNULL(F.USE_FL, 'Y') = 'Y'
+           AND F.REFER_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+         ORDER BY F.FILE_SQ ASC
+    </select>
+
+    <!--
+      [selectPopupNoticeListForUser]
+      사용자 페이지 팝업 공지 목록:
+      - 접근 가능한 게시판(bbsIds)만
+      - 팝업 USE='Y'
+      - HIDE_FL은 "오늘 하루 보지 않기" 버튼 노출 여부이므로 목록 제외 조건으로 사용하지 않음
+      - 팝업 기간(START_DT~END_DT) 유효
+      - 게시글 삭제/비활성/예약/만료 제외
+    -->
+    <select id="selectPopupNoticeListForUser" parameterType="map" resultType="tvframework.man.dto.BbsUserPopupNoticeDTO">
+        SELECT CAST(P.POPUP_SQ AS CHAR) AS popupSq
+             , CAST(P.NTT_SQ AS CHAR) AS nttSq
+             , P.BBS_ID AS bbsId
+             , P.CMPNY_CD AS cmpnyCd
+             , IFNULL(M.MESSAGE_CN, P.BBS_ID) AS bbsNm
+             , N.TITLE AS title
+             , CASE
+                   WHEN #{languageCode} = 'en_US'
+                   THEN IFNULL(U.USER_ENG_NM, U.USER_NM)
+                   ELSE IFNULL(U.USER_NM, '')
+               END AS userNm
+             , DATE_FORMAT(N.CREATION_DT, '%Y-%m-%d %H:%i:%s') AS creationDt
+          FROM CM_NTT_POPUP P
+          INNER JOIN CM_NTT N ON N.NTT_SQ = P.NTT_SQ AND N.BBS_ID = P.BBS_ID AND N.CMPNY_CD = P.CMPNY_CD
+          INNER JOIN CM_BBS B ON B.BBS_ID = P.BBS_ID AND B.CMPNY_CD = P.CMPNY_CD
+          LEFT JOIN CM_USER U ON U.USER_ID = N.CREATION_ID
+          LEFT JOIN CM_MESSAGE_LANG M ON M.LANG_KEY = B.BBS_NM_KEY AND M.CMPNY_CD = B.CMPNY_CD AND M.LANG_CODE = #{languageCode}
+         WHERE P.CMPNY_CD = #{cmpnyCd}
+           AND IFNULL(P.USE_FL, 'Y') = 'Y'
+           AND (P.START_DT IS NULL OR P.START_DT &lt;= NOW())
+           AND (P.END_DT IS NULL OR P.END_DT &gt;= NOW())
+           AND N.DELETE_FL = 'N'
+           AND IFNULL(N.USE_FL, 'Y') = 'Y'
+           AND (N.RESVE_DT IS NULL OR N.RESVE_DT &lt;= NOW())
+           AND (N.EXPIRY_DT IS NULL OR N.EXPIRY_DT &gt;= NOW())
+           <if test="bbsIds != null and bbsIds.size() &gt; 0">
+           AND P.BBS_ID IN
+           <foreach collection="bbsIds" item="bid" open="(" separator="," close=")">
+               #{bid}
+           </foreach>
+           </if>
+           <if test="bbsIds == null or bbsIds.size() == 0">
+           AND 1 = 0
+           </if>
+         ORDER BY P.POPUP_SQ DESC
+    </select>
+
+    <!--
+      [selectPopupPreviewForUser]
+      사용자 팝업 공지 상세(설정 미리보기 공용):
+      - popupSq/bbsId/nttSq/cmpnyCd 일치
+      - 팝업 USE/HIDE/기간 정책은 강제하지 않음(관리자 미리보기 지원)
+      - 게시글 삭제/비활성 제외
+    -->
+    <select id="selectPopupPreviewForUser" parameterType="map" resultType="tvframework.man.dto.BbsUserPopupPreviewDTO">
+        SELECT CAST(P.POPUP_SQ AS CHAR) AS popupSq
+             , CAST(N.NTT_SQ AS CHAR) AS nttSq
+             , N.BBS_ID AS bbsId
+             , N.CMPNY_CD AS cmpnyCd
+             , CASE
+                   WHEN N.CATEGORY_SQ IS NOT NULL
+                   THEN CONCAT('[', IFNULL(C.CATEGORY_NM, ''), '] ', IFNULL(N.TITLE, ''))
+                   ELSE IFNULL(N.TITLE, '')
+               END AS title
+             , N.CONTENTS AS contents
+             , IFNULL(N.RD_CNT, 0) AS rdCnt
+             , IFNULL(N.LIKE_CNT, 0) AS likeCnt
+             , IFNULL(N.DISLIKE_CNT, 0) AS dislikeCnt
+             , IFNULL(N.FAVORITE_CNT, 0) AS favoriteCnt
+             , CASE WHEN (
+                   SELECT COUNT(*)
+                     FROM CM_NTT_VOTE V
+                    WHERE V.NTT_SQ = N.NTT_SQ
+                      AND V.BBS_ID = N.BBS_ID
+                      AND V.CMPNY_CD = N.CMPNY_CD
+                      AND V.VOTE_GB = 'L'
+                      AND V.MBRSH_SQ = (
+                          SELECT M.MBRSH_SQ
+                            FROM CM_USER_ORGNZT_MBRSH M
+                           WHERE M.CMPNY_CD = N.CMPNY_CD
+                             AND M.USER_ID = #{userId}
+                             AND M.USE_FL = 'Y'
+                           LIMIT 1
+                      )
+               ) > 0 THEN 'Y' ELSE 'N' END AS myLikeFl
+             , CASE WHEN (
+                   SELECT COUNT(*)
+                     FROM CM_NTT_VOTE V
+                    WHERE V.NTT_SQ = N.NTT_SQ
+                      AND V.BBS_ID = N.BBS_ID
+                      AND V.CMPNY_CD = N.CMPNY_CD
+                      AND V.VOTE_GB = 'D'
+                      AND V.MBRSH_SQ = (
+                          SELECT M.MBRSH_SQ
+                            FROM CM_USER_ORGNZT_MBRSH M
+                           WHERE M.CMPNY_CD = N.CMPNY_CD
+                             AND M.USER_ID = #{userId}
+                             AND M.USE_FL = 'Y'
+                           LIMIT 1
+                      )
+               ) > 0 THEN 'Y' ELSE 'N' END AS myDislikeFl
+             , CASE WHEN (
+                   SELECT COUNT(*)
+                     FROM CM_NTT_FAVORITE F
+                    WHERE F.NTT_SQ = N.NTT_SQ
+                      AND F.BBS_ID = N.BBS_ID
+                      AND F.CMPNY_CD = N.CMPNY_CD
+                      AND F.MBRSH_SQ = (
+                          SELECT M.MBRSH_SQ
+                            FROM CM_USER_ORGNZT_MBRSH M
+                           WHERE M.CMPNY_CD = N.CMPNY_CD
+                             AND M.USER_ID = #{userId}
+                             AND M.USE_FL = 'Y'
+                           LIMIT 1
+                      )
+               ) > 0 THEN 'Y' ELSE 'N' END AS myFavoriteFl
+             , CASE WHEN #{languageCode} = 'en_US' THEN IFNULL(U.USER_ENG_NM, U.USER_NM) ELSE IFNULL(U.USER_NM, '') END AS userNm
+             , DATE_FORMAT(N.CREATION_DT, '%Y.%m.%d') AS creationDt
+             , IFNULL(P.XCNTS, 100) AS xcnts
+             , IFNULL(P.YDNTS, 100) AS ydnts
+             , IFNULL(P.WIDTH, 520) AS width
+             , IFNULL(P.VRTICL, 620) AS vrticl
+             , IFNULL(P.HIDE_FL, 'Y') AS hideFl
+          FROM CM_NTT_POPUP P
+          INNER JOIN CM_NTT N ON N.NTT_SQ = P.NTT_SQ AND N.BBS_ID = P.BBS_ID AND N.CMPNY_CD = P.CMPNY_CD
+          INNER JOIN CM_BBS B ON B.BBS_ID = N.BBS_ID AND B.CMPNY_CD = N.CMPNY_CD
+          LEFT JOIN CM_USER U ON U.USER_ID = N.CREATION_ID
+          LEFT JOIN CM_BBS_CATEGORY C ON C.BBS_ID = N.BBS_ID AND C.CMPNY_CD = N.CMPNY_CD AND C.CATEGORY_SQ = N.CATEGORY_SQ
+         WHERE P.POPUP_SQ = CAST(#{popupSq} AS DECIMAL(30,0))
+           AND P.NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND P.BBS_ID = #{bbsId}
+           AND P.CMPNY_CD = #{cmpnyCd}
+           AND N.DELETE_FL = 'N'
+           AND IFNULL(N.USE_FL, 'Y') = 'Y'
+         LIMIT 1
+    </select>
+
+    <select id="selectPopupSettingByPostForUser" parameterType="map" resultType="tvframework.man.dto.BbsUserPopupSettingDTO">
+        SELECT CAST(P.POPUP_SQ AS CHAR) AS popupSq
+             , CAST(P.NTT_SQ AS CHAR) AS nttSq
+             , P.BBS_ID AS bbsId
+             , P.CMPNY_CD AS cmpnyCd
+             , P.XCNTS AS xcnts
+             , P.YDNTS AS ydnts
+             , P.WIDTH AS width
+             , P.VRTICL AS vrticl
+             , DATE_FORMAT(P.START_DT, '%Y-%m-%d %H:%i:%s') AS startDt
+             , DATE_FORMAT(P.END_DT, '%Y-%m-%d %H:%i:%s') AS endDt
+             , P.HIDE_FL AS hideFl
+             , P.USE_FL AS useFl
+          FROM CM_NTT_POPUP P
+         WHERE P.CMPNY_CD = #{cmpnyCd}
+           AND P.BBS_ID = #{bbsId}
+           AND P.NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+         ORDER BY P.POPUP_SQ DESC
+         LIMIT 1
+    </select>
+
+    <insert id="insertPopupSettingByPostForUser" parameterType="map">
+        INSERT INTO CM_NTT_POPUP (
+            POPUP_SQ, NTT_SQ, BBS_ID, CMPNY_CD,
+            XCNTS, YDNTS, WIDTH, VRTICL, START_DT, END_DT,
+            HIDE_FL, USE_FL
+        ) VALUES (
+            (
+                SELECT IFNULL(MAX(T.POPUP_SQ), 0) + 1
+                  FROM CM_NTT_POPUP T
+                 WHERE T.CMPNY_CD = #{cmpnyCd}
+            ),
+            CAST(#{nttSq} AS DECIMAL(30,0)),
+            #{bbsId},
+            #{cmpnyCd},
+            #{xcnts},
+            #{ydnts},
+            #{width},
+            #{vrticl},
+            <choose><when test="startDt != null and startDt != ''">STR_TO_DATE(#{startDt}, '%Y-%m-%d %H:%i:%s')</when><otherwise>NULL</otherwise></choose>,
+            <choose><when test="endDt != null and endDt != ''">STR_TO_DATE(#{endDt}, '%Y-%m-%d %H:%i:%s')</when><otherwise>NULL</otherwise></choose>,
+            #{hideFl},
+            #{useFl}
+        )
+    </insert>
+
+    <update id="updatePopupSettingByPostForUser" parameterType="map">
+        UPDATE CM_NTT_POPUP
+           SET XCNTS = #{xcnts}
+             , YDNTS = #{ydnts}
+             , WIDTH = #{width}
+             , VRTICL = #{vrticl}
+             , START_DT = <choose><when test="startDt != null and startDt != ''">STR_TO_DATE(#{startDt}, '%Y-%m-%d %H:%i:%s')</when><otherwise>NULL</otherwise></choose>
+             , END_DT = <choose><when test="endDt != null and endDt != ''">STR_TO_DATE(#{endDt}, '%Y-%m-%d %H:%i:%s')</when><otherwise>NULL</otherwise></choose>
+             , HIDE_FL = #{hideFl}
+             , USE_FL = #{useFl}
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND BBS_ID = #{bbsId}
+           AND NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+    </update>
+
+    <delete id="deletePopupSettingByPostForUser" parameterType="map">
+        DELETE FROM CM_NTT_POPUP
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND BBS_ID = #{bbsId}
+           AND NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+    </delete>
+
+    <!-- 페이징 total — 접근 가능 게시판 + 예약/만료 유효 게시글만 집계 -->
+    <select id="countNttList" parameterType="map" resultType="int">
+        SELECT COUNT(*)
+          FROM CM_NTT A
+         WHERE A.CMPNY_CD = #{cmpnyCd}
+           AND A.DELETE_FL = 'N'
+           AND IFNULL(A.USE_FL, 'Y') = 'Y'
+           AND (A.RESVE_DT IS NULL OR A.RESVE_DT &lt;= NOW())
+           AND (A.EXPIRY_DT IS NULL OR A.EXPIRY_DT &gt;= NOW())
+           <if test="bbsIds != null and bbsIds.size() &gt; 0">
+           AND A.BBS_ID IN
+           <foreach collection="bbsIds" item="bid" open="(" separator="," close=")">
+               #{bid}
+           </foreach>
+           </if>
+           <if test="bbsIds == null or bbsIds.size() == 0">
+           AND 1 = 0
+           </if>
+    </select>
+
+    <!--
+      [selectNttList]
+      게시글 목록(스니펫·댓글수·다국어 작성자명)
+      - 예약/만료 유효 게시글만 노출
+      - NOTICE 우선 정렬 + 생성일 정렬
+      - noticeYn: NTT_TY='NOTICE' 인 경우 Y
+    -->
+    <select id="selectNttList" parameterType="map" resultType="tvframework.man.dto.BbsUserNttDTO">
+        SELECT CAST(A.NTT_SQ AS CHAR) AS nttSq
+             , A.BBS_ID AS bbsId
+             , IFNULL(M2.MESSAGE_CN, A.BBS_ID) AS bbsName
+             , CASE
+                   WHEN A.CATEGORY_SQ IS NOT NULL
+                   THEN CONCAT('[', IFNULL(C.CATEGORY_NM, ''), '] ', IFNULL(A.TITLE, ''))
+                   ELSE IFNULL(A.TITLE, '')
+               END AS title
+             , CASE
+                   WHEN LENGTH(IFNULL(A.CONTENTS, '')) &gt; 180
+                   THEN CONCAT(SUBSTRING(REPLACE(REPLACE(IFNULL(A.CONTENTS, ''), '\r', ''), '\n', ' '), 1, 180), '…')
+                   ELSE IFNULL(REPLACE(REPLACE(IFNULL(A.CONTENTS, ''), '\r', ''), '\n', ' '), '')
+               END AS snippet
+             , CASE
+                   WHEN IFNULL(A.NTT_STTUS, 'PUBLIC') = 'SECRET' THEN '비밀글'
+                   WHEN #{languageCode} = 'en_US' THEN IFNULL(U.USER_ENG_NM, U.USER_NM)
+                   ELSE IFNULL(U.USER_NM, '')
+               END AS userNm
+             , A.CREATION_ID AS creationId
+             , IFNULL(A.NTT_STTUS, 'PUBLIC') AS nttSttus
+             , DATE_FORMAT(A.CREATION_DT, '%Y.%m.%d') AS creationDt
+             , IFNULL(A.RD_CNT, 0) AS rdCnt
+             , (SELECT COUNT(*)
+                  FROM CM_NTT_COMMENT CC
+                 WHERE CC.NTT_SQ = A.NTT_SQ
+                   AND IFNULL(CC.USE_FL, 'Y') = 'Y'
+                   AND IFNULL(CC.APPROVED_FL, 'Y') = 'Y') AS commentCnt
+             , CASE WHEN IFNULL(A.NTT_TY, '') = 'NOTICE' THEN 'Y' ELSE 'N' END AS noticeYn
+             , IFNULL(A.DEPTH, 0) AS depth
+             , (SELECT CAST(F1.FILE_SQ AS CHAR)
+                  FROM CM_FILE F1
+                 WHERE F1.FILE_TY = 'BBS'
+                   AND F1.SAVE_TY = 'DATA'
+                   AND IFNULL(F1.USE_FL, 'Y') = 'Y'
+                   AND F1.REFER_SQ = CAST(A.NTT_SQ AS DECIMAL(30,0))
+                 ORDER BY F1.FILE_SQ ASC
+                 LIMIT 1) AS thumbFileSq
+             , (SELECT F2.MIME_TY
+                  FROM CM_FILE F2
+                 WHERE F2.FILE_TY = 'BBS'
+                   AND F2.SAVE_TY = 'DATA'
+                   AND IFNULL(F2.USE_FL, 'Y') = 'Y'
+                   AND F2.REFER_SQ = CAST(A.NTT_SQ AS DECIMAL(30,0))
+                 ORDER BY F2.FILE_SQ ASC
+                 LIMIT 1) AS thumbMimeTy
+             , CAST(U.FILE_SQ AS CHAR) AS profileFileSq
+          FROM CM_NTT A
+          INNER JOIN CM_BBS BB ON BB.BBS_ID = A.BBS_ID AND BB.CMPNY_CD = A.CMPNY_CD
+          LEFT JOIN CM_USER U ON U.USER_ID = A.CREATION_ID
+          LEFT JOIN CM_NTT G
+            ON G.NTT_SQ = IFNULL(A.GROUP_NO, A.NTT_SQ)
+           AND G.BBS_ID = A.BBS_ID
+           AND G.CMPNY_CD = A.CMPNY_CD
+          LEFT JOIN CM_BBS_CATEGORY C
+            ON C.BBS_ID = A.BBS_ID AND C.CMPNY_CD = A.CMPNY_CD AND C.CATEGORY_SQ = A.CATEGORY_SQ
+          LEFT JOIN CM_MESSAGE_LANG M2
+            ON M2.LANG_KEY = BB.BBS_NM_KEY AND M2.CMPNY_CD = BB.CMPNY_CD AND M2.LANG_CODE = #{languageCode}
+         WHERE A.CMPNY_CD = #{cmpnyCd}
+           AND A.DELETE_FL = 'N'
+           AND IFNULL(A.USE_FL, 'Y') = 'Y'
+           AND (A.RESVE_DT IS NULL OR A.RESVE_DT &lt;= NOW())
+           AND (A.EXPIRY_DT IS NULL OR A.EXPIRY_DT &gt;= NOW())
+           <if test="bbsIds != null and bbsIds.size() &gt; 0">
+           AND A.BBS_ID IN
+           <foreach collection="bbsIds" item="bid" open="(" separator="," close=")">
+               #{bid}
+           </foreach>
+           </if>
+           <if test="bbsIds == null or bbsIds.size() == 0">
+           AND 1 = 0
+           </if>
+        <choose>
+            <when test="sortAsc == true">
+         ORDER BY CASE WHEN IFNULL(G.NTT_TY, IFNULL(A.NTT_TY, '')) = 'NOTICE' THEN 0 ELSE 1 END ASC,
+                  IFNULL(A.GROUP_NO, A.NTT_SQ) ASC, IFNULL(A.ORDER_NO, 0) ASC, A.NTT_SQ ASC
+            </when>
+            <otherwise>
+         ORDER BY CASE WHEN IFNULL(G.NTT_TY, IFNULL(A.NTT_TY, '')) = 'NOTICE' THEN 0 ELSE 1 END ASC,
+                  IFNULL(A.GROUP_NO, A.NTT_SQ) DESC, IFNULL(A.ORDER_NO, 0) ASC, A.NTT_SQ DESC
+            </otherwise>
+        </choose>
+         LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <!-- 단일 게시글 상세(HTML 본문·좋아요/즐겨찾기 여부 등) -->
+    <select id="selectPostDetail" parameterType="map" resultType="tvframework.man.dto.BbsUserPostDetailDTO">
+        SELECT CAST(N.NTT_SQ AS CHAR) AS nttSq
+             , N.BBS_ID AS bbsId
+             , N.CMPNY_CD AS cmpnyCd
+             , CASE
+                   WHEN N.CATEGORY_SQ IS NOT NULL
+                   THEN CONCAT('[', IFNULL(C.CATEGORY_NM, ''), '] ', IFNULL(N.TITLE, ''))
+                   ELSE IFNULL(N.TITLE, '')
+               END AS title
+             , N.CONTENTS AS contents
+             , IFNULL(N.RD_CNT, 0) AS rdCnt
+             , IFNULL(N.LIKE_CNT, 0) AS likeCnt
+             , IFNULL(N.DISLIKE_CNT, 0) AS dislikeCnt
+             , IFNULL(N.FAVORITE_CNT, 0) AS favoriteCnt
+             , CASE
+                   WHEN IFNULL(N.NTT_STTUS, 'PUBLIC') = 'SECRET' THEN '비밀글'
+                   WHEN #{languageCode} = 'en_US' THEN IFNULL(U.USER_ENG_NM, U.USER_NM)
+                   ELSE IFNULL(U.USER_NM, '')
+               END AS userNm
+             , DATE_FORMAT(N.CREATION_DT, '%Y.%m.%d %H:%i') AS creationDt
+             , BB.LIKE_FL AS likeFl
+             , CASE
+                   WHEN BB.LIKE_FL = 'Y' THEN (
+                       CASE WHEN (
+                           SELECT COUNT(*)
+                             FROM CM_NTT_VOTE V
+                            WHERE V.NTT_SQ = N.NTT_SQ
+                              AND V.BBS_ID = N.BBS_ID
+                              AND V.CMPNY_CD = N.CMPNY_CD
+                              AND V.VOTE_GB = 'L'
+                              AND V.MBRSH_SQ = CAST(#{mbrshSq} AS DECIMAL(30, 0))
+                       ) &gt; 0 THEN 'Y' ELSE 'N' END
+                   )
+                   ELSE NULL
+               END AS myLikeFl
+             , BB.DISLIKE_FL AS dislikeFl
+             , BB.COMMENT_FL AS commentFl
+             , BB.REPLY_FL AS replyFl
+             , CASE
+                   WHEN BB.DISLIKE_FL = 'Y' THEN (
+                       CASE WHEN (
+                           SELECT COUNT(*)
+                             FROM CM_NTT_VOTE V
+                            WHERE V.NTT_SQ = N.NTT_SQ
+                              AND V.BBS_ID = N.BBS_ID
+                              AND V.CMPNY_CD = N.CMPNY_CD
+                              AND V.VOTE_GB = 'D'
+                              AND V.MBRSH_SQ = CAST(#{mbrshSq} AS DECIMAL(30, 0))
+                       ) &gt; 0 THEN 'Y' ELSE 'N' END
+                   )
+                   ELSE NULL
+               END AS myDislikeFl
+             , CASE WHEN (
+                   SELECT COUNT(*)
+                     FROM CM_NTT_FAVORITE F
+                    WHERE F.NTT_SQ = N.NTT_SQ
+                      AND F.BBS_ID = N.BBS_ID
+                      AND F.CMPNY_CD = N.CMPNY_CD
+                      AND F.MBRSH_SQ = CAST(#{mbrshSq} AS DECIMAL(30, 0))
+               ) &gt; 0 THEN 'Y' ELSE 'N' END AS myFavoriteFl
+             , CAST(U.FILE_SQ AS CHAR) AS profileFileSq
+             , N.CREATION_ID AS creationId
+             , CASE WHEN IFNULL(N.NTT_TY, '') = 'NOTICE' THEN 'Y' ELSE 'N' END AS noticeYn
+             , IFNULL(N.NTT_STTUS, 'PUBLIC') AS nttSttus
+             , IFNULL(N.TITLE, '') AS titlePlain
+             , CAST(N.CATEGORY_SQ AS CHAR) AS categorySq
+             , DATE_FORMAT(N.RESVE_DT, '%Y%m%d%H%i%s') AS ntceBgnde
+             , DATE_FORMAT(N.EXPIRY_DT, '%Y%m%d%H%i%s') AS ntceEndde
+          FROM CM_NTT N
+         INNER JOIN CM_BBS BB ON BB.BBS_ID = N.BBS_ID AND BB.CMPNY_CD = N.CMPNY_CD
+          LEFT JOIN CM_USER U ON U.USER_ID = N.CREATION_ID
+          LEFT JOIN CM_BBS_CATEGORY C ON C.BBS_ID = N.BBS_ID AND C.CMPNY_CD = N.CMPNY_CD AND C.CATEGORY_SQ = N.CATEGORY_SQ
+         WHERE N.BBS_ID = #{bbsId}
+           AND N.CMPNY_CD = #{cmpnyCd}
+           AND N.NTT_SQ = CAST(#{nttSq} AS DECIMAL(30, 0))
+           AND N.DELETE_FL = 'N'
+           AND IFNULL(N.USE_FL, 'Y') = 'Y'
+         LIMIT 1
+    </select>
+
+    <update id="updateUserPost" parameterType="map">
+        UPDATE CM_NTT N
+           SET N.TITLE = #{title}
+             , N.CONTENTS = #{contents}
+             , N.CATEGORY_SQ =
+               <choose>
+                   <when test="categorySq != null and categorySq != ''">CAST(#{categorySq} AS DECIMAL(30,0))</when>
+                   <otherwise>NULL</otherwise>
+               </choose>
+             , N.NTT_TY =
+               <choose>
+                   <when test='"Y".equals(noticeAt)'>'NOTICE'</when>
+                   <otherwise>'NORMAL'</otherwise>
+               </choose>
+             , N.NTT_STTUS =
+               <choose>
+                   <when test='"SECRET".equalsIgnoreCase(nttSttus)'>'SECRET'</when>
+                   <otherwise>'PUBLIC'</otherwise>
+               </choose>
+             , N.RESVE_DT =
+               <choose>
+                   <when test="ntceBgnde != null and ntceBgnde != ''">STR_TO_DATE(#{ntceBgnde}, '%Y%m%d%H%i%s')</when>
+                   <otherwise>NULL</otherwise>
+               </choose>
+             , N.EXPIRY_DT =
+               <choose>
+                   <when test="ntceEndde != null and ntceEndde != ''">STR_TO_DATE(#{ntceEndde}, '%Y%m%d%H%i%s')</when>
+                   <otherwise>NULL</otherwise>
+               </choose>
+             , N.UPDATE_ID = #{updateId}
+             , N.UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE N.CMPNY_CD = #{cmpnyCd}
+           AND N.BBS_ID = #{bbsId}
+           AND N.NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND N.DELETE_FL = 'N'
+           AND IFNULL(N.USE_FL, 'Y') = 'Y'
+           AND (
+                   N.CREATION_ID = #{userId}
+                OR #{managerOverride} = 1
+               )
+    </update>
+
+    <update id="softDeleteUserPost" parameterType="map">
+        UPDATE CM_NTT N
+           SET N.DELETE_FL = 'Y'
+             , N.UPDATE_ID = #{updateId}
+             , N.UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE N.CMPNY_CD = #{cmpnyCd}
+           AND N.BBS_ID = #{bbsId}
+           AND N.NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND N.DELETE_FL = 'N'
+           AND IFNULL(N.USE_FL, 'Y') = 'Y'
+           AND (
+                   N.CREATION_ID = #{userId}
+                OR #{managerOverride} = 1
+               )
+    </update>
+
+    <!-- 게시글 본문 첨부(CM_FILE FILE_TY=BBS, REFER_SQ=NTT_SQ) 소프트 삭제 — 게시글과 동일 키로 한정 -->
+    <update id="softDeletePostAttachedFiles" parameterType="map">
+        UPDATE CM_FILE F
+         INNER JOIN CM_NTT N
+            ON N.NTT_SQ = F.REFER_SQ
+           AND N.BBS_ID = #{bbsId}
+           AND N.CMPNY_CD = #{cmpnyCd}
+           SET F.USE_FL = 'N'
+             , F.UPDATE_ID = #{updateId}
+         WHERE F.FILE_TY = 'BBS'
+           AND F.SAVE_TY = 'DATA'
+           AND IFNULL(F.USE_FL, 'Y') = 'Y'
+           AND N.NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND N.BBS_ID = #{bbsId}
+           AND N.CMPNY_CD = #{cmpnyCd}
+    </update>
+
+    <!-- 게시글 카운트 동기화: 조회/추천/비추천/즐겨찾기 -->
+    <update id="updatePostCounts" parameterType="map">
+        UPDATE CM_NTT
+           SET RD_CNT = (
+                   SELECT COUNT(*)
+                     FROM CM_NTT_VIEW
+                    WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+                      AND BBS_ID = #{bbsId}
+                      AND CMPNY_CD = #{cmpnyCd}
+               )
+             , LIKE_CNT = (
+                   SELECT COUNT(*)
+                     FROM CM_NTT_VOTE
+                    WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+                      AND BBS_ID = #{bbsId}
+                      AND CMPNY_CD = #{cmpnyCd}
+                      AND VOTE_GB = 'L'
+               )
+             , DISLIKE_CNT = (
+                   SELECT COUNT(*)
+                     FROM CM_NTT_VOTE
+                    WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+                      AND BBS_ID = #{bbsId}
+                      AND CMPNY_CD = #{cmpnyCd}
+                      AND VOTE_GB = 'D'
+               )
+             , FAVORITE_CNT = (
+                   SELECT COUNT(*)
+                     FROM CM_NTT_FAVORITE
+                    WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+                      AND BBS_ID = #{bbsId}
+                      AND CMPNY_CD = #{cmpnyCd}
+               )
+         WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </update>
+
+    <insert id="insertPostRead" parameterType="map">
+        INSERT IGNORE INTO CM_NTT_VIEW (NTT_SQ, BBS_ID, CMPNY_CD, MBRSH_SQ)
+        SELECT CAST(#{nttSq} AS DECIMAL(30,0)), #{bbsId}, #{cmpnyCd}, M.MBRSH_SQ
+          FROM CM_USER_ORGNZT_MBRSH M
+          INNER JOIN CM_USER U ON U.USER_ID = M.USER_ID
+         WHERE M.CMPNY_CD = #{cmpnyCd}
+           AND M.USER_ID = #{userId}
+           AND M.USE_FL = 'Y'
+         LIMIT 1
+    </insert>
+
+    <insert id="insertPostVote" parameterType="map">
+        INSERT IGNORE INTO CM_NTT_VOTE (NTT_SQ, BBS_ID, CMPNY_CD, MBRSH_SQ, VOTE_GB)
+        SELECT CAST(#{nttSq} AS DECIMAL(30,0)), #{bbsId}, #{cmpnyCd}, M.MBRSH_SQ, #{voteGb}
+          FROM CM_USER_ORGNZT_MBRSH M
+          INNER JOIN CM_USER U ON U.USER_ID = M.USER_ID
+         WHERE M.CMPNY_CD = #{cmpnyCd}
+           AND M.USER_ID = #{userId}
+           AND M.USE_FL = 'Y'
+         LIMIT 1
+    </insert>
+
+    <insert id="insertPostFavorite" parameterType="map">
+        INSERT IGNORE INTO CM_NTT_FAVORITE (NTT_SQ, BBS_ID, CMPNY_CD, MBRSH_SQ)
+        SELECT CAST(#{nttSq} AS DECIMAL(30,0)), #{bbsId}, #{cmpnyCd}, M.MBRSH_SQ
+          FROM CM_USER_ORGNZT_MBRSH M
+          INNER JOIN CM_USER U ON U.USER_ID = M.USER_ID
+         WHERE M.CMPNY_CD = #{cmpnyCd}
+           AND M.USER_ID = #{userId}
+           AND M.USE_FL = 'Y'
+         LIMIT 1
+    </insert>
+
+    <select id="countPostVote" parameterType="map" resultType="int">
+        SELECT COUNT(*)
+          FROM CM_NTT_VOTE V
+         WHERE V.NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND V.BBS_ID = #{bbsId}
+           AND V.CMPNY_CD = #{cmpnyCd}
+           AND V.VOTE_GB = #{voteGb}
+           AND V.MBRSH_SQ = (
+               SELECT M.MBRSH_SQ
+                 FROM CM_USER_ORGNZT_MBRSH M
+                 INNER JOIN CM_USER U ON U.USER_ID = M.USER_ID
+                WHERE M.CMPNY_CD = #{cmpnyCd}
+                  AND M.USER_ID = #{userId}
+                  AND M.USE_FL = 'Y'
+                LIMIT 1
+           )
+    </select>
+
+    <select id="countPostFavorite" parameterType="map" resultType="int">
+        SELECT COUNT(*)
+          FROM CM_NTT_FAVORITE F
+         WHERE F.NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND F.BBS_ID = #{bbsId}
+           AND F.CMPNY_CD = #{cmpnyCd}
+           AND F.MBRSH_SQ = (
+               SELECT M.MBRSH_SQ
+                 FROM CM_USER_ORGNZT_MBRSH M
+                 INNER JOIN CM_USER U ON U.USER_ID = M.USER_ID
+                WHERE M.CMPNY_CD = #{cmpnyCd}
+                  AND M.USER_ID = #{userId}
+                  AND M.USE_FL = 'Y'
+                LIMIT 1
+           )
+    </select>
+
+    <delete id="deletePostVote" parameterType="map">
+        DELETE FROM CM_NTT_VOTE
+         WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+           AND VOTE_GB = #{voteGb}
+           AND MBRSH_SQ = (
+               SELECT M.MBRSH_SQ
+                 FROM CM_USER_ORGNZT_MBRSH M
+                 INNER JOIN CM_USER U ON U.USER_ID = M.USER_ID
+                WHERE M.CMPNY_CD = #{cmpnyCd}
+                  AND M.USER_ID = #{userId}
+                  AND M.USE_FL = 'Y'
+                LIMIT 1
+           )
+    </delete>
+
+    <delete id="deletePostFavorite" parameterType="map">
+        DELETE FROM CM_NTT_FAVORITE
+         WHERE NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND BBS_ID = #{bbsId}
+           AND CMPNY_CD = #{cmpnyCd}
+           AND MBRSH_SQ = (
+               SELECT M.MBRSH_SQ
+                 FROM CM_USER_ORGNZT_MBRSH M
+                 INNER JOIN CM_USER U ON U.USER_ID = M.USER_ID
+                WHERE M.CMPNY_CD = #{cmpnyCd}
+                  AND M.USER_ID = #{userId}
+                  AND M.USE_FL = 'Y'
+                LIMIT 1
+           )
+    </delete>
+
+    <!-- 댓글 목록: GROUP_NO/ORDER_NO/DEPTH 기반 계층 정렬 + 비공개/삭제 마스킹 -->
+    <select id="selectCommentList" parameterType="map" resultType="tvframework.man.dto.BbsUserCommentDTO">
+        SELECT CAST(T.COMMENT_SQ AS CHAR) AS commentSq
+             , CAST(T.NTT_SQ AS CHAR) AS nttSq
+             , T.BBS_ID AS bbsId
+             , T.CMPNY_CD AS cmpnyCd
+             , NULL AS parentCommentSq
+             , CASE
+                   WHEN IFNULL(T.COMMENT, '') = '삭제된 글입니다.' THEN '삭제된 글입니다.'
+                   WHEN IFNULL(T.SECRET_FL, 'N') = 'Y'
+                        AND IFNULL(T.CREATION_ID, '') != #{userId}
+                        AND #{userId} != (
+                            SELECT N.CREATION_ID
+                              FROM CM_NTT N
+                             WHERE N.NTT_SQ = T.NTT_SQ
+                               AND N.BBS_ID = T.BBS_ID
+                               AND N.CMPNY_CD = T.CMPNY_CD
+                             LIMIT 1
+                        )
+                  THEN '비밀글 댓글입니다.'
+                   ELSE T.COMMENT
+               END AS comment
+             , IFNULL(T.SECRET_FL, 'N') AS secretFl
+             , 'N' AS noticeFl
+             , DATE_FORMAT(T.CREATION_DT, '%Y-%m-%d %H:%i:%s') AS creationDt
+             , T.CREATION_ID AS userId
+             , CASE WHEN #{userId} = IFNULL(T.CREATION_ID, '') THEN 'Y' ELSE 'N' END AS myCommentFl
+             , CASE WHEN #{userId} = IFNULL(T.CREATION_ID, '')
+                    THEN IFNULL(U.USER_NM, '')
+                    ELSE CONCAT(LEFT(IFNULL(U.USER_NM, '익명'), 1), REPEAT('*', GREATEST(CHAR_LENGTH(IFNULL(U.USER_NM, '익명')) - 1, 0)))
+               END AS userNm
+             , IFNULL(T.DEPTH, 0) AS threadDepth
+          FROM CM_NTT_COMMENT T
+          LEFT JOIN CM_USER U ON U.USER_ID = T.CREATION_ID
+         WHERE T.CMPNY_CD = #{cmpnyCd}
+           AND T.BBS_ID = #{bbsId}
+           AND T.NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND IFNULL(T.APPROVED_FL, 'Y') = 'Y'
+           AND IFNULL(T.USE_FL, 'Y') = 'Y'
+         ORDER BY IFNULL(T.GROUP_NO, T.COMMENT_SQ) DESC, IFNULL(T.ORDER_NO, 0) ASC, T.COMMENT_SQ ASC
+    </select>
+
+    <select id="selectCommentSecretFl" parameterType="map" resultType="java.lang.String">
+        SELECT IFNULL(SECRET_FL, 'N')
+          FROM CM_NTT_COMMENT
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND BBS_ID = #{bbsId}
+           AND NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND COMMENT_SQ = CAST(#{commentSq} AS DECIMAL(30,0))
+           AND IFNULL(USE_FL, 'Y') = 'Y'
+         LIMIT 1
+    </select>
+
+    <select id="selectCommentThreadInfo" parameterType="map" resultType="map">
+        SELECT CAST(GROUP_NO AS CHAR) AS groupNo
+             , IFNULL(ORDER_NO, 0) AS orderNo
+             , IFNULL(DEPTH, 0) AS depth
+          FROM CM_NTT_COMMENT
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND BBS_ID = #{bbsId}
+           AND NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND COMMENT_SQ = CAST(#{commentSq} AS DECIMAL(30,0))
+           AND IFNULL(USE_FL, 'Y') = 'Y'
+         LIMIT 1
+    </select>
+
+    <select id="selectMaxCommentOrderNoByGroup" parameterType="map" resultType="int">
+        SELECT IFNULL(MAX(IFNULL(ORDER_NO, 0)), 0)
+          FROM CM_NTT_COMMENT
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND BBS_ID = #{bbsId}
+           AND NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND GROUP_NO = CAST(#{groupNo} AS DECIMAL(30,0))
+           AND IFNULL(USE_FL, 'Y') = 'Y'
+    </select>
+
+    <insert id="insertComment" parameterType="map">
+        INSERT INTO CM_NTT_COMMENT (
+            COMMENT_SQ, NTT_SQ, BBS_ID, CMPNY_CD, MBRSH_SQ,
+            COMMENT, APPROVED_FL, SECRET_FL, USE_FL, CREATION_ID, UPDATE_ID,
+            GROUP_NO, ORDER_NO, DEPTH
+        ) VALUES (
+            CAST(#{commentSq} AS DECIMAL(30,0)),
+            CAST(#{nttSq} AS DECIMAL(30,0)),
+            #{bbsId},
+            #{cmpnyCd},
+            CAST(#{mbrshSq} AS DECIMAL(30,0)),
+            #{comment},
+            'Y',
+            IFNULL(#{secretFl}, 'N'),
+            'Y',
+            #{creationId},
+            #{updateId},
+            CAST(#{groupNo} AS DECIMAL(30,0)),
+            IFNULL(#{orderNo}, 0),
+            IFNULL(#{depth}, 0)
+        )
+    </insert>
+
+    <select id="countCommentOwner" parameterType="map" resultType="int">
+        SELECT COUNT(*)
+          FROM CM_NTT_COMMENT
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND BBS_ID = #{bbsId}
+           AND NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND COMMENT_SQ = CAST(#{commentSq} AS DECIMAL(30,0))
+           AND CREATION_ID = #{userId}
+           AND IFNULL(USE_FL, 'Y') = 'Y'
+           AND IFNULL(COMMENT, '') != '삭제된 글입니다.'
+    </select>
+
+    <update id="updateComment" parameterType="map">
+        UPDATE CM_NTT_COMMENT
+           SET COMMENT = #{comment}
+             , SECRET_FL = IFNULL(#{secretFl}, 'N')
+             , UPDATE_ID = #{updateId}
+             , UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND BBS_ID = #{bbsId}
+           AND NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND COMMENT_SQ = CAST(#{commentSq} AS DECIMAL(30,0))
+           AND IFNULL(USE_FL, 'Y') = 'Y'
+           AND IFNULL(COMMENT, '') != '삭제된 글입니다.'
+    </update>
+
+    <update id="deleteComment" parameterType="map">
+        UPDATE CM_NTT_COMMENT
+           SET COMMENT = '삭제된 글입니다.'
+             , SECRET_FL = 'N'
+             , USE_FL = 'Y'
+             , UPDATE_ID = #{updateId}
+             , UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND BBS_ID = #{bbsId}
+           AND NTT_SQ = CAST(#{nttSq} AS DECIMAL(30,0))
+           AND COMMENT_SQ = CAST(#{commentSq} AS DECIMAL(30,0))
+           AND IFNULL(USE_FL, 'Y') = 'Y'
+           AND IFNULL(COMMENT, '') != '삭제된 글입니다.'
+    </update>
+</mapper>

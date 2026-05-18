@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="tvframework.man.service.impl.WidgetMapper">
+
+    <!-- 회사·사용자별 구성원번호 -->
+    <select id="selectMbrshSq" parameterType="map" resultType="java.math.BigDecimal">
+        SELECT MBRSH_SQ
+          FROM CM_USER_ORGNZT_MBRSH
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND USER_ID = #{userId}
+           AND IFNULL(USE_FL, 'Y') = 'Y'
+         LIMIT 1
+    </select>
+
+    <!-- 사용자별 저장 대시보드 -->
+    <select id="selectUserDashboard" parameterType="map" resultType="tvframework.man.dto.WidgetDTO">
+        SELECT DASHBRD_ID   AS dashbrdId
+             , CMPNY_CD     AS cmpnyCd
+             , MBRSH_SQ     AS mbrshSq
+             , CAST(LAYOUT_JSON AS CHAR)  AS layoutJson
+             , CAST(CONFIG_JSON AS CHAR) AS configJson
+             , USE_FL       AS useFl
+             , CREATION_ID  AS creationId
+             , DATE_FORMAT(CREATION_DT, '%Y-%m-%d %H:%i:%s') AS creationDt
+             , UPDATE_ID    AS updateId
+             , DATE_FORMAT(UPDATE_DT, '%Y-%m-%d %H:%i:%s') AS updateDt
+          FROM CM_DASHBRD
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND MBRSH_SQ = #{mbrshSq}
+           AND IFNULL(USE_FL, 'Y') = 'Y'
+         LIMIT 1
+    </select>
+
+    <!-- 회사 기본 대시보드 (관리자 저장, MBRSH_SQ IS NULL) -->
+    <select id="selectDefaultDashboard" parameterType="map" resultType="tvframework.man.dto.WidgetDTO">
+        SELECT DASHBRD_ID   AS dashbrdId
+             , CMPNY_CD     AS cmpnyCd
+             , MBRSH_SQ     AS mbrshSq
+             , CAST(LAYOUT_JSON AS CHAR)  AS layoutJson
+             , CAST(CONFIG_JSON AS CHAR) AS configJson
+             , USE_FL       AS useFl
+             , CREATION_ID  AS creationId
+             , DATE_FORMAT(CREATION_DT, '%Y-%m-%d %H:%i:%s') AS creationDt
+             , UPDATE_ID    AS updateId
+             , DATE_FORMAT(UPDATE_DT, '%Y-%m-%d %H:%i:%s') AS updateDt
+          FROM CM_DASHBRD
+         WHERE CMPNY_CD = #{cmpnyCd}
+           AND MBRSH_SQ IS NULL
+           AND IFNULL(USE_FL, 'Y') = 'Y'
+         ORDER BY CREATION_DT ASC
+         LIMIT 1
+    </select>
+
+    <insert id="insertDashboard" parameterType="map">
+        INSERT INTO CM_DASHBRD (
+            DASHBRD_ID
+          , CMPNY_CD
+          , MBRSH_SQ
+          , LAYOUT_JSON
+          , CONFIG_JSON
+          , USE_FL
+          , CREATION_ID
+          , UPDATE_ID
+        ) VALUES (
+            #{dashbrdId}
+          , #{cmpnyCd}
+          , #{mbrshSq}
+          , <choose>
+                <when test="layoutJson != null and layoutJson != ''">CAST(#{layoutJson} AS JSON)</when>
+                <otherwise>NULL</otherwise>
+            </choose>
+          , <choose>
+                <when test="configJson != null and configJson != ''">CAST(#{configJson} AS JSON)</when>
+                <otherwise>NULL</otherwise>
+            </choose>
+          , IFNULL(#{useFl}, 'Y')
+          , #{creationId}
+          , #{updateId}
+        )
+    </insert>
+
+    <update id="updateDashboard" parameterType="map">
+        UPDATE CM_DASHBRD
+           SET LAYOUT_JSON = <choose>
+                <when test="layoutJson != null and layoutJson != ''">CAST(#{layoutJson} AS JSON)</when>
+                <otherwise>NULL</otherwise>
+            </choose>
+             , CONFIG_JSON = <choose>
+                <when test="configJson != null and configJson != ''">CAST(#{configJson} AS JSON)</when>
+                <otherwise>NULL</otherwise>
+            </choose>
+             , UPDATE_ID = #{updateId}
+             , UPDATE_DT = CURRENT_TIMESTAMP
+         WHERE DASHBRD_ID = #{dashbrdId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </update>
+
+    <!-- 메인 갤러리: 위젯 목록 (화면설계서 쿼리, FILE_DATA는 용량 이슈로 제외 — FILE_SQ로 이미지 API 조회) -->
+    <select id="selectMainWidgetGallery" parameterType="map" resultType="tvframework.sit.wgt.dto.WidgetDTO">
+        SELECT A.WIDGET_ID       AS widgetId
+             , A.WIDGET_NAME     AS widgetName
+             , A.DATASET_ID      AS datasetId
+             , A.STYLE_ID        AS styleId
+             , A.CATEGORY_CD     AS categoryCd
+             , CAST(A.MAPPING_JSON AS CHAR) AS mappingJson
+             , CAST(A.CONFIG_JSON AS CHAR) AS configJson
+             , CAST(A.FILE_SQ AS CHAR) AS fileSq
+             , A.USE_FL          AS useFl
+             , A.CMPNY_CD        AS cmpnyCd
+          FROM CM_WIDGET A
+         WHERE A.CMPNY_CD = #{cmpnyCd}
+           AND IFNULL(A.USE_FL, 'Y') = 'Y'
+        <if test="categoryCd != null and categoryCd != '' and categoryCd != 'ALL'">
+           AND A.CATEGORY_CD = #{categoryCd}
+        </if>
+        <if test="searchKeyword != null and searchKeyword != ''">
+           AND A.WIDGET_NAME LIKE CONCAT('%', #{searchKeyword}, '%')
+        </if>
+         ORDER BY A.WIDGET_ID ASC
+    </select>
+
+</mapper>

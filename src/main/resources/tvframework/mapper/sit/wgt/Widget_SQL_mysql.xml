@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="WidgetMapper">
+
+    <!-- 카테고리(CMMNCODE.582) 등 공통코드는 CmmnCompanyService.selectCodeOption 사용 -->
+
+    <select id="selectWidgetList" parameterType="map" resultType="tvframework.sit.wgt.dto.WidgetDTO">
+        SELECT A.WIDGET_ID       AS widgetId
+             , A.WIDGET_NAME     AS widgetName
+             , B.DATASET_TY      AS datasetTy
+             , C.STYLE_TY        AS styleTy
+             , A.USE_FL          AS useFl
+             , DATE_FORMAT(IFNULL(A.UPDATE_DT, A.CREATION_DT), '%Y-%m-%d') AS modifyDt
+          FROM CM_WIDGET A
+    INNER JOIN CM_WIDGET_DATASET B
+            ON A.DATASET_ID = B.DATASET_ID
+           AND A.CMPNY_CD = B.CMPNY_CD
+    INNER JOIN CM_WIDGET_STYLE C
+            ON A.STYLE_ID = C.STYLE_ID
+           AND A.CMPNY_CD = C.CMPNY_CD
+         WHERE A.CMPNY_CD = #{cmpnyCd}
+        <if test="categoryCd != null and categoryCd != ''">
+           AND A.CATEGORY_CD = #{categoryCd}
+        </if>
+        <if test="widgetName != null and widgetName != ''">
+           AND A.WIDGET_NAME LIKE CONCAT('%', #{widgetName}, '%')
+        </if>
+         ORDER BY A.WIDGET_ID ASC
+    </select>
+
+    <select id="selectWidgetDetail" parameterType="map" resultType="tvframework.sit.wgt.dto.WidgetDTO">
+        SELECT A.WIDGET_ID       AS widgetId
+             , A.CMPNY_CD        AS cmpnyCd
+             , A.WIDGET_NAME     AS widgetName
+             , A.DATASET_ID      AS datasetId
+             , A.STYLE_ID        AS styleId
+             , A.CATEGORY_CD     AS categoryCd
+             , CAST(A.MAPPING_JSON AS CHAR) AS mappingJson
+             , CAST(A.CONFIG_JSON AS CHAR) AS configJson
+             , CAST(A.FILE_SQ AS CHAR) AS fileSq
+             , A.USE_FL          AS useFl
+             , A.CREATION_ID     AS creationId
+             , DATE_FORMAT(A.CREATION_DT, '%Y-%m-%d %H:%i:%s') AS creationDt
+             , A.UPDATE_ID       AS updateId
+             , DATE_FORMAT(A.UPDATE_DT, '%Y-%m-%d %H:%i:%s') AS updateDt
+          FROM CM_WIDGET A
+         WHERE A.WIDGET_ID = #{widgetId}
+           AND A.CMPNY_CD = #{cmpnyCd}
+    </select>
+
+    <select id="selectWidgetAuthors" parameterType="map" resultType="tvframework.sit.wgt.dto.WidgetAuthorDTO">
+        SELECT A.AUTHOR_CD       AS authorCd
+             , B.AUTHOR_NM       AS authorNm
+             , B.AUTHOR_CN       AS authorCn
+          FROM CM_WIDGET_AUTHOR A
+    INNER JOIN CM_AUTHOR B
+            ON A.CMPNY_CD = B.CMPNY_CD
+           AND A.AUTHOR_CD = B.AUTHOR_CD
+         WHERE A.WIDGET_ID = #{widgetId}
+           AND A.CMPNY_CD = #{cmpnyCd}
+           AND IFNULL(A.USE_FL, 'Y') = 'Y'
+           AND IFNULL(B.USE_FL, 'Y') = 'Y'
+         ORDER BY A.AUTHOR_CD ASC
+    </select>
+
+    <!-- nextWidgetId: CM_IDS.TABLE_NAME = 'WIDGET_ID' (TableIdGnrServiceImpl widgetIdGnrService) -->
+
+    <insert id="insertWidget" parameterType="map">
+        INSERT INTO CM_WIDGET (
+            WIDGET_ID
+          , CMPNY_CD
+          , WIDGET_NAME
+          , DATASET_ID
+          , STYLE_ID
+          , CATEGORY_CD
+          , MAPPING_JSON
+          , CONFIG_JSON
+          , FILE_SQ
+          , USE_FL
+          , CREATION_ID
+          , UPDATE_ID
+        ) VALUES (
+            #{widgetId}
+          , #{cmpnyCd}
+          , #{widgetName}
+          , #{datasetId}
+          , #{styleId}
+          , #{categoryCd}
+          , <choose>
+                <when test="mappingJson != null and mappingJson != ''">CAST(#{mappingJson} AS JSON)</when>
+                <otherwise>NULL</otherwise>
+            </choose>
+          , <choose>
+                <when test="configJson != null and configJson != ''">CAST(#{configJson} AS JSON)</when>
+                <otherwise>NULL</otherwise>
+            </choose>
+          , <choose>
+                <when test="fileSq != null and fileSq != ''">CAST(#{fileSq} AS DECIMAL(30,0))</when>
+                <otherwise>NULL</otherwise>
+            </choose>
+          , #{useFl}
+          , #{creationId}
+          , #{updateId}
+        )
+    </insert>
+
+    <update id="updateWidget" parameterType="map">
+        UPDATE CM_WIDGET
+           SET WIDGET_NAME = #{widgetName}
+             , DATASET_ID = #{datasetId}
+             , STYLE_ID = #{styleId}
+             , CATEGORY_CD = #{categoryCd}
+             , MAPPING_JSON = CAST(#{mappingJson} AS JSON)
+             , CONFIG_JSON = CAST(#{configJson} AS JSON)
+             , FILE_SQ = <choose>
+                <when test="fileSq != null and fileSq != ''">CAST(#{fileSq} AS DECIMAL(30,0))</when>
+                <otherwise>NULL</otherwise>
+            </choose>
+             , USE_FL = #{useFl}
+             , UPDATE_ID = #{updateId}
+             , UPDATE_DT = NOW()
+         WHERE WIDGET_ID = #{widgetId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </update>
+
+    <delete id="deleteWidgetAuthors" parameterType="map">
+        DELETE FROM CM_WIDGET_AUTHOR
+         WHERE WIDGET_ID = #{widgetId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </delete>
+
+    <insert id="insertWidgetAuthor" parameterType="map">
+        INSERT INTO CM_WIDGET_AUTHOR (
+            WIDGET_ID
+          , CMPNY_CD
+          , AUTHOR_CD
+          , USE_FL
+          , CREATION_ID
+          , UPDATE_ID
+        ) VALUES (
+            #{widgetId}
+          , #{cmpnyCd}
+          , #{authorCd}
+          , 'Y'
+          , #{creationId}
+          , #{updateId}
+        )
+    </insert>
+
+    <insert id="insertCmFileWidgetData" parameterType="map">
+        INSERT INTO CM_FILE (
+            FILE_SQ
+          , FILE_TY
+          , FILE_NM
+          , SAVE_TY
+          , MIME_TY
+          , FILE_EXT
+          , FILE_PATH
+          , FILE_DATA
+          , FILE_SIZE
+          , USE_FL
+          , CREATION_ID
+          , UPDATE_ID
+        ) VALUES (
+            CAST(#{fileSq} AS DECIMAL(30,0))
+          , 'WIDGET'
+          , #{fileNm}
+          , 'DATA'
+          , #{mimeTy}
+          , #{fileExt}
+          , NULL
+          , #{fileData, jdbcType=BLOB}
+          , #{fileSize}
+          , 'Y'
+          , #{creationId}
+          , #{updateId}
+        )
+    </insert>
+
+    <!-- FILE_TY: 앱 업로드는 'WIDGET'. DB 직접 입력·타 시스템 연동 시 FILE_TY가 다를 수 있어 FILE_SQ·FILE_DATA만으로 조회 -->
+    <select id="selectCmFileWidgetData" parameterType="map" resultType="tvframework.sit.wgt.dto.CmFileBinaryDTO">
+        SELECT FILE_DATA AS fileData
+             , MIME_TY AS mimeTy
+          FROM CM_FILE
+         WHERE FILE_SQ = CAST(#{fileSq} AS DECIMAL(30,0))
+           AND FILE_DATA IS NOT NULL
+    </select>
+
+    <delete id="deleteFileBySq" parameterType="map">
+        DELETE FROM CM_FILE
+         WHERE FILE_SQ = CAST(#{fileSq} AS DECIMAL(30,0))
+           AND FILE_TY = 'WIDGET'
+    </delete>
+
+    <delete id="deleteWidget" parameterType="map">
+        DELETE FROM CM_WIDGET
+         WHERE WIDGET_ID = #{widgetId}
+           AND CMPNY_CD = #{cmpnyCd}
+    </delete>
+
+</mapper>
