@@ -323,7 +323,6 @@ function Header() {
                     src={headerProfileImgUrl}
                     alt=""
                     width={34}
-                    height={34}
                     onError={() => setHeaderProfileImgFailed(true)}
                   />
                 ) : (
