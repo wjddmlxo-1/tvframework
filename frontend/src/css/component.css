@@ -1467,3 +1467,8 @@ select::-ms-expand {
 .react-datepicker__tab-loop {
   display: inline-block;
 }
+
+/* 레거시 base.css 유틸 (폼·버튼 너비) */
+.w_full { width: 100%; }
+.w_100 { width: 100px; }
+.w_130 { width: 130px; }

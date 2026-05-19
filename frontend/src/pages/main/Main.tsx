@@ -128,7 +128,9 @@ function escapeHtmlPlain(s: string): string {
 function buildEmptyWidgetPreviewDoc(message: string): string {
   return buildWidgetStylePreviewSrcDoc(
     `<div class="wgs-card"><div class="wgs-body"><div class="wgs-data">${escapeHtmlPlain(message)}</div></div></div>`,
-    buildCssFromBasic(DEFAULT_BASIC_PREVIEW)
+    buildCssFromBasic(DEFAULT_BASIC_PREVIEW),
+    undefined,
+    { fitInSlot: true }
   );
 }
 
@@ -795,10 +797,14 @@ export default function Main() {
     originLeft: number;
     originTop: number;
   } | null>(null);
-  const [categoryCd, setCategoryCd] = useState<string>("ALL");
-  const [searchKeyword, setSearchKeyword] = useState("");
+  /** 홈 구성 팝업 전용 검색·갤러리 (배경 캔버스와 분리) */
+  const [configCmpnyCd, setConfigCmpnyCd] = useState("");
+  const [configCategoryCd, setConfigCategoryCd] = useState<string>("ALL");
+  const [configSearchKeyword, setConfigSearchKeyword] = useState("");
+  const [configGallery, setConfigGallery] = useState<GalleryRow[]>([]);
   const [categories, setCategories] = useState<CodeOpt[]>([]);
-  const [gallery, setGallery] = useState<GalleryRow[]>([]);
+  /** 배경 슬롯 표시용 — 갤러리 검색과 무관하게 슬롯 배치 시에만 갱신 */
+  const [slotWidgetMeta, setSlotWidgetMeta] = useState<Record<string, GalleryRow>>({});
   const [dash, setDash] = useState<DashRow | null>(null);
   const [layout, setLayout] = useState<LayoutModel>(() => emptyLayout("split-h"));
   const [configJsonText, setConfigJsonText] = useState<string>("[]");
@@ -861,40 +867,46 @@ export default function Main() {
     );
   }, [langCode]);
 
-  const loadGallery = useCallback(() => {
-    if (!cmpnyCd) return;
-    const q = new URLSearchParams({ cmpnyCd });
-    if (categoryCd && categoryCd !== "ALL") q.set("categoryCd", categoryCd);
-    if (searchKeyword.trim()) q.set("searchKeyword", searchKeyword.trim());
+  const loadConfigGallery = useCallback(() => {
+    if (!configCmpnyCd) {
+      setConfigGallery([]);
+      return;
+    }
+    const q = new URLSearchParams({ cmpnyCd: configCmpnyCd });
+    if (configCategoryCd && configCategoryCd !== "ALL") q.set("categoryCd", configCategoryCd);
+    if (configSearchKeyword.trim()) q.set("searchKeyword", configSearchKeyword.trim());
     EgovNet.requestFetch(
       `${MAIN_DASHBOARD_API}/widgets?${q.toString()}`,
       { method: "GET", headers: { Accept: "application/json" } },
       (resp: { resultCode?: number; result?: unknown }) => {
         if (Number(resp.resultCode) === Number(CODE.RCV_SUCCESS)) {
-          setGallery(normalizeGalleryRows(resp.result));
+          setConfigGallery(normalizeGalleryRows(resp.result));
         } else {
-          setGallery([]);
+          setConfigGallery([]);
         }
       }
     );
-  }, [cmpnyCd, categoryCd, searchKeyword]);
+  }, [configCmpnyCd, configCategoryCd, configSearchKeyword]);
 
-  const loadDashboard = useCallback(() => {
+  const loadDashboard = useCallback((options?: { silent?: boolean }) => {
     if (!cmpnyCd) return;
-    setLoading(true);
+    if (!options?.silent) setLoading(true);
     EgovNet.requestFetch(
       `${MAIN_DASHBOARD_API}/dashboard?cmpnyCd=${encodeURIComponent(cmpnyCd)}`,
       { method: "GET", headers: { Accept: "application/json" } },
       (resp: { resultCode?: number; result?: DashRow | null }) => {
-        setLoading(false);
+        if (!options?.silent) setLoading(false);
         if (Number(resp.resultCode) === Number(CODE.RCV_SUCCESS)) {
           const row = resp.result;
           setDash(row || null);
           setLayout(parseLayoutJson(row?.layoutJson));
           setConfigJsonText(configJsonToText(row?.configJson));
+          setSlotWidgetMeta({});
         }
       },
-      () => setLoading(false)
+      () => {
+        if (!options?.silent) setLoading(false);
+      }
     );
   }, [cmpnyCd]);
 
@@ -907,10 +919,6 @@ export default function Main() {
   }, [loadCategories]);
 
   useEffect(() => {
-    loadGallery();
-  }, [loadGallery]);
-
-  useEffect(() => {
     loadDashboard();
   }, [cmpnyCd, loadDashboard]);
 
@@ -918,12 +926,23 @@ export default function Main() {
     setFocusedSlotId(SLOT_IDS[layout.kind][0] ?? null);
   }, [layout.kind]);
 
+  /* 구성 팝업 열릴 때: 팝업 전용 검색 조건만 초기화 (전역 회사·배경 대시보드는 유지) */
   useEffect(() => {
-    if (configOpen) {
-      loadGallery();
-      loadCategories();
+    if (!configOpen) {
+      setConfigGallery([]);
+      return;
     }
-  }, [configOpen, loadGallery, loadCategories]);
+    setConfigCmpnyCd(cmpnyCd);
+    setConfigCategoryCd("ALL");
+    setConfigSearchKeyword("");
+    loadCategories();
+  }, [configOpen, cmpnyCd, loadCategories]);
+
+  /* 팝업 내 회사·카테고리 변경 시 갤러리만 재조회 (검색어는 Enter 시 수동 조회) */
+  useEffect(() => {
+    if (!configOpen || !configCmpnyCd) return;
+    loadConfigGallery();
+  }, [configOpen, configCmpnyCd, configCategoryCd, loadConfigGallery]);
 
   useEffect(() => {
     const slotWidgetIds = Array.from(new Set(layout.slots.map((s) => s.widgetId).filter(Boolean)));
@@ -942,7 +961,7 @@ export default function Main() {
       todayDt: new Date().toISOString().slice(0, 10),
     };
     const fetchPreviewDoc = async (widgetId: string): Promise<[string, string]> => {
-      const galleryMeta = gallery.find((g) => g.widgetId === widgetId);
+      const galleryMeta = slotWidgetMeta[widgetId];
       let meta = galleryMeta;
       try {
         const widgetQ = new URLSearchParams({ widgetId, cmpnyCd });
@@ -1090,6 +1109,7 @@ export default function Main() {
           buildWidgetStylePreviewSrcDoc(finalHtml, cssTemplateForPreview, styleRow.styleTy, {
             js: finalJs || undefined,
             pinBasicStyleChrome: guessedBasic,
+            fitInSlot: true,
           }),
         ];
       } catch {
@@ -1106,7 +1126,7 @@ export default function Main() {
   }, [
     layout.slots,
     cmpnyCd,
-    gallery,
+    slotWidgetMeta,
     langGb,
     emptyWidgetPreviewSrcDoc,
     i18nText.etcPreviewTokenTitle,
@@ -1128,6 +1148,10 @@ export default function Main() {
   const assignWidgetToSlot = useCallback((widgetId: string, slotId?: string | null) => {
     const id = String(widgetId || "").trim();
     if (!id) return;
+    const row = configGallery.find((g) => g.widgetId === id);
+    if (row) {
+      setSlotWidgetMeta((prev) => ({ ...prev, [id]: row }));
+    }
     setLayout((prev) => {
       const slots = SLOT_IDS[prev.kind];
       const target =
@@ -1140,11 +1164,27 @@ export default function Main() {
       next.push({ slotId: target, instanceId: newInstanceId(), widgetId: id });
       return { ...prev, slots: next };
     });
-  }, [focusedSlotId]);
+  }, [focusedSlotId, configGallery]);
 
   const removeSlot = useCallback((slotId: string) => {
     setLayout((prev) => ({ ...prev, slots: prev.slots.filter((s) => s.slotId !== slotId) }));
   }, []);
+
+  /* 슬롯에서 제거된 위젯 메타 정리 */
+  useEffect(() => {
+    const activeIds = new Set(layout.slots.map((s) => s.widgetId).filter(Boolean));
+    setSlotWidgetMeta((prev) => {
+      let changed = false;
+      const next = { ...prev };
+      for (const id of Object.keys(next)) {
+        if (!activeIds.has(id)) {
+          delete next[id];
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, [layout.slots]);
 
   const closeConfigModal = useCallback(() => {
     setConfigOpen(false);
@@ -1152,11 +1192,15 @@ export default function Main() {
 
   const onCancelModal = useCallback(() => {
     setConfigOpen(false);
-    loadDashboard();
+    loadDashboard({ silent: true });
   }, [loadDashboard]);
 
   const onSave = useCallback(() => {
-    if (!cmpnyCd) return;
+    const saveCmpny = configCmpnyCd || cmpnyCd;
+    if (!saveCmpny) return;
+    if (saveCmpny !== cmpnyCd) {
+      onCompanyChange(saveCmpny);
+    }
     const layoutNorm = normalizeJsonForMysqlOrAlert(
       layoutJsonString,
       i18nText.labelJsonLayoutField,
@@ -1173,7 +1217,7 @@ export default function Main() {
     );
     if (configNorm == null) return;
     const body: Record<string, unknown> = {
-      cmpnyCd,
+      cmpnyCd: saveCmpny,
       layoutJson: layoutNorm,
       configJson: configNorm,
       useFl: "Y",
@@ -1196,7 +1240,9 @@ export default function Main() {
       }
     );
   }, [
+    configCmpnyCd,
     cmpnyCd,
+    onCompanyChange,
     layoutJsonString,
     configJsonText,
     dash?.dashbrdId,
@@ -1263,8 +1309,8 @@ export default function Main() {
   }, []);
 
   const widgetMeta = useCallback(
-    (widgetId: string) => gallery.find((g) => g.widgetId === widgetId),
-    [gallery]
+    (widgetId: string) => slotWidgetMeta[widgetId],
+    [slotWidgetMeta]
   );
 
   const renderSlotCard = useCallback(
@@ -1307,6 +1353,7 @@ export default function Main() {
                   })}
                   className="md-home-slot__iframe"
                   srcDoc={widgetPreviewDocs[entry.widgetId] || emptyWidgetPreviewSrcDoc}
+                  scrolling="no"
                 />
               </div>
             </div>
@@ -1320,7 +1367,6 @@ export default function Main() {
       layout.slots,
       layout.kind,
       focusedSlotId,
-      gallery,
       widgetMeta,
       i18nText,
       emptyWidgetPreviewSrcDoc,
@@ -1435,7 +1481,11 @@ export default function Main() {
             <div className="md-home-modal__toolbar">
               <label className="md-main-home__field">
                 <span className="md-main-home__label">{i18nText.labelCompany}</span>
-                <select className="md-input md-input--sm" value={cmpnyCd} onChange={(e) => onCompanyChange(e.target.value)}>
+                <select
+                  className="md-input md-input--sm"
+                  value={configCmpnyCd}
+                  onChange={(e) => setConfigCmpnyCd(e.target.value)}
+                >
                   {companyList.map((c) => (
                     <option key={c.cmpnyCd} value={c.cmpnyCd}>
                       {c.cmpnyNm}
@@ -1445,7 +1495,11 @@ export default function Main() {
               </label>
               <label className="md-main-home__field">
                 <span className="md-main-home__label">{i18nText.labelCategory}</span>
-                <select className="md-input md-input--sm" value={categoryCd} onChange={(e) => setCategoryCd(e.target.value)}>
+                <select
+                  className="md-input md-input--sm"
+                  value={configCategoryCd}
+                  onChange={(e) => setConfigCategoryCd(e.target.value)}
+                >
                   <option value="ALL">{i18nText.labelCategoryAll}</option>
                   {categories.map((c) => (
                     <option key={c.code} value={c.code}>
@@ -1458,9 +1512,9 @@ export default function Main() {
                 type="search"
                 className="md-input md-input--sm md-main-home__search"
                 placeholder={i18nText.placeholderSearchWidget}
-                value={searchKeyword}
-                onChange={(e) => setSearchKeyword(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && loadGallery()}
+                value={configSearchKeyword}
+                onChange={(e) => setConfigSearchKeyword(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && loadConfigGallery()}
               />
               <div className="md-main-home__actions">
                 <button type="button" className="md-btn md-btn--text" onClick={onCancelModal}>
@@ -1501,9 +1555,11 @@ export default function Main() {
             <div className="md-main-home__gallery md-home-config-dock__gallery">
               <div className="md-main-home__gallery-label">{i18nText.labelGallery}</div>
               <div className="md-main-home__gallery-scroll">
-                {!cmpnyCd && <p className="md-main-home__gallery-empty">{i18nText.msgGalleryLoadHint}</p>}
-                {cmpnyCd && gallery.length === 0 && <p className="md-main-home__gallery-empty">{i18nText.msgGalleryEmpty}</p>}
-                {gallery.map((w) => (
+                {!configCmpnyCd && <p className="md-main-home__gallery-empty">{i18nText.msgGalleryLoadHint}</p>}
+                {configCmpnyCd && configGallery.length === 0 && (
+                  <p className="md-main-home__gallery-empty">{i18nText.msgGalleryEmpty}</p>
+                )}
+                {configGallery.map((w) => (
                   <button
                     type="button"
                     key={w.widgetId}
@@ -1533,8 +1589,6 @@ export default function Main() {
           </div>
         </div>
       )}
-
-
       <style>{`
         .main-dashboard.md-main-home.P_MAIN::before,
         .md-main-home.P_MAIN::before { display: none !important; }
@@ -1673,19 +1727,18 @@ position: relative; letter-spacing: 0.02rem; }
           display: flex;
           align-items: center;
           justify-content: center;
+          overflow: hidden;
         }
         .md-home-slot__body--fill {
           box-sizing: border-box;
-          align-items: center;
-          justify-content: center;
-          overflow: auto;
-          -webkit-overflow-scrolling: touch;
+          align-items: stretch;
+          justify-content: stretch;
+          overflow: hidden;
         }
         .md-home-slot__body--placeholder {
           padding: 10px;
           min-height: 80px;
-          overflow: auto;
-          -webkit-overflow-scrolling: touch;
+          overflow: hidden;
         }
         .md-home-slot__img--fit {
           display: block;
@@ -1702,10 +1755,11 @@ position: relative; letter-spacing: 0.02rem; }
         .md-home-slot__iframe {
           width: 100%;
           height: 100%;
-          min-height: 120px;
+          min-height: 0;
           border: 0;
           background: #fff;
           display: block;
+          overflow: hidden;
         }
         .md-home-slot__ph { font-size: 12px; color: #64748b; word-break: break-all; text-align: center; padding: 8px; }
         .md-home-slot__empty {

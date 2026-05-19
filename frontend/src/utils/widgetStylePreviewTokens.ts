@@ -318,7 +318,16 @@ export type WidgetStylePreviewSrcDocOptions = {
    * 선형 등 일부 DB 템플릿에서 첫 `<style>`이 깨져 카드 테두리가 빠질 때 보강한다. (`buildCssFromBasic` 전체를 넣지 않음 — 본문·헤더 규칙 덮어쓰기 방지)
    */
   pinBasicStyleChrome?: BasicStyle;
+  /** 메인 홈 대시보드 슬롯: iframe 내부 스크롤바 없이 영역에 맞춤(넘치는 내용은 잘림) */
+  fitInSlot?: boolean;
 };
+
+/** `fitInSlot` — 홈 대시보드 위젯 카드용(관리 화면 미리보기에는 적용하지 않음) */
+const WIDGET_PREVIEW_FIT_IN_SLOT_CSS = `html,body{margin:0;padding:0;height:100%;width:100%;overflow:hidden!important;box-sizing:border-box;}
+html *,html *::before,html *::after{box-sizing:inherit;}
+.wgs-card,.wgs-body,.wgs-shell{max-height:100%;overflow:hidden!important;}
+html *{scrollbar-width:none;-ms-overflow-style:none;}
+html *::-webkit-scrollbar{width:0!important;height:0!important;display:none;}`;
 
 /** JS에 Chart.js API 사용이 있으면 true (불필요한 CDN 로드 방지) */
 export function widgetPreviewJsNeedsChartJs(js: string): boolean {
@@ -414,6 +423,9 @@ export function buildWidgetStylePreviewSrcDoc(
       tail = `<script>${safeJs}</script>`;
     }
   }
+  const fitInSlotCss = options?.fitInSlot
+    ? WIDGET_PREVIEW_FIT_IN_SLOT_CSS.replace(/<\/style>/gi, "<\\/style>")
+    : "";
   const i18nHitCss = options?.injectI18nHitLayer
     ? `.wgs-i18n-hit{cursor:text;border-radius:3px;transition:box-shadow .15s ease;-webkit-user-select:text;user-select:text}.wgs-i18n-hit:hover{box-shadow:0 0 0 2px #93c5fd}.wgs-i18n-hit.wgs-i18n-sel{box-shadow:0 0 0 2px #f59e0b;background:rgba(254,243,199,.4)}th.wgs-i18n-cell-sel,td.wgs-i18n-cell-sel,.wgs-i18n-cell-sel{box-shadow:inset 0 0 0 2px #f59e0b;background:rgba(254,243,199,.25)}`
     : "";
@@ -563,5 +575,6 @@ document.addEventListener("drop",function(e){
     }${pinChromeCss
       ? `<style data-wgs-basic-chrome="1">${pinChromeCss}</style>`
       : ""
+    }${fitInSlotCss ? `<style data-wgs-fit-in-slot="1">${fitInSlotCss}</style>` : ""
     }</head><body style="margin:0;font-family:'Pretendard Variable',system-ui,-apple-system,'Segoe UI',sans-serif !important;">${marker}${html}${tail}${i18nHitScript}</body></html>`;
 }

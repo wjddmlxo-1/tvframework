@@ -2,7 +2,6 @@ import RootRoutes from "@/routes";
 import { BrowserRouter as Router } from "react-router-dom";
 import { LanguageProvider } from "@/contexts/LanguageContext";
 
-import "@/css/base.css";
 import "@/css/layout.css";
 import "@/css/component.css";
 import "@/css/material-variables.css";
