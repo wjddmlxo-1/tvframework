@@ -16,7 +16,7 @@ tvframework 프로젝트를 Cursor에서 개발하고 GitHub(`wjddmlxo-1/tvframe
 ### GitHub에서 저장소 만들 때
 
 - **README 추가**로 생성하면 원격에 초기 커밋이 생깁니다.
-- 로컬에서 `git init` 후 첫 커밋을 만들었다면, push 시 **이력이 달라 거절**될 수 있습니다. (아래 [5.3](#53-push-거절-fetch-first) 참고)
+- 로컬에서 `git init` 후 첫 커밋을 만들었다면, push 시 **이력이 달라 거절**될 수 있습니다. (아래 [3.2](#32-push-거절-fetch-first) 참고)
 
 ### Cursor / 터미널
 
@@ -118,6 +118,8 @@ git push -u origin main --force
 
 `--force`는 원격 `main`을 덮어씁니다. 다른 사람과 공유 중인 브랜치에서는 사용하지 마세요.
 
+> **협업 중** 같은 메시지가 나오면 초기 이력 문제가 아니라 **남이 먼저 push**한 경우가 많습니다. → [5. push 전에 원격 변경 받기](#5-push-전에-원격-변경-받기-협업) 참고.
+
 ---
 
 ### 3.3 Everything up-to-date
@@ -189,9 +191,11 @@ tvframework/          ← 이 저장소 하나만 사용
 
 ```powershell
 cd D:\tvframework
+git pull origin main          # 작업 시작 시 또는 push 직전 (다른 사람 변경 반영)
 git status
 git add .
 git commit -m "변경 내용 설명"
+git pull origin main          # push 직전 한 번 더 권장
 git push origin main
 ```
 
@@ -206,7 +210,77 @@ git push origin main
 
 ---
 
-## 5. GitHub에 올리기 (체크리스트)
+## 5. push 전에 원격 변경 받기 (협업)
+
+로컬에서 작업하는 동안 **다른 사람이 GitHub에 push**했을 수 있습니다.  
+그 상태에서 바로 `git push`하면 아래처럼 **거절**될 수 있습니다.
+
+```
+! [rejected] main -> main (fetch first)
+hint: Updates were rejected because the remote contains work that you do not have locally.
+```
+
+**의미:** 원격에 내가 아직 받지 않은 커밋이 있으므로, **먼저 가져와 합친 뒤** push해야 합니다.
+
+### 5.1 기본 순서 (가장 많이 사용)
+
+```powershell
+cd D:\tvframework
+
+git pull origin main    # 원격 main을 가져와 로컬 main에 병합
+git push origin main    # 충돌 없으면 push
+```
+
+| 명령 | 의미 |
+|------|------|
+| `git fetch origin` | 원격 변경만 **다운로드** (로컬 파일은 아직 그대로) |
+| `git pull origin main` | fetch + **내 `main`에 병합** |
+| `git push origin main` | 병합된 결과를 GitHub에 업로드 |
+
+### 5.2 권장 작업 흐름
+
+**작업 시작할 때** 한 번 pull 하면 push 시 문제가 줄어듭니다.
+
+```powershell
+git pull origin main
+# → 코드 수정 → git add . → git commit -m "..."
+git pull origin main    # push 직전에 한 번 더
+git push origin main
+```
+
+### 5.3 충돌(conflict)이 났을 때
+
+`git pull` 후 `CONFLICT`가 보이면, **같은 파일의 같은 부분**을 둘 다 수정한 경우입니다.
+
+1. Cursor에서 충돌 파일 열기 (`<<<<<<<`, `=======`, `>>>>>>>` 표시 확인)
+2. **남길 코드**만 남기고 충돌 표시 제거 후 저장
+3. 아래 실행:
+
+```powershell
+git add .
+git commit -m "Merge remote main and resolve conflicts"
+git push origin main
+```
+
+### 5.4 커밋하지 않은 변경이 있을 때 pull
+
+작업 중인 파일이 있으면 pull 전에 **커밋**하거나 **임시 저장(stash)** 하세요.
+
+```powershell
+git stash
+git pull origin main
+git stash pop
+# 충돌 나면 해결 후 add → commit
+```
+
+### 5.5 주의 사항
+
+- **`git push --force`**: 원격 커밋을 덮어쓸 수 있어 **팀 작업 시 일반적으로 금지**합니다. 보통은 `pull` → 충돌 해결 → `push`만 사용합니다.
+- **3.2 fetch first**와 달리, 협업 중 `pull` 거절은 대개 “남이 먼저 올린 정상 커밋”이 있어서이며, `--allow-unrelated-histories`는 **초기 이력 합칠 때만** 사용합니다.
+
+---
+
+## 6. GitHub에 올리기 (체크리스트)
 
 ```powershell
 cd D:\tvframework
@@ -215,11 +289,17 @@ cd D:\tvframework
 git remote -v
 # → https://github.com/wjddmlxo-1/tvframework.git
 
-# 2) 변경 스테이징 & 커밋
+# 2) 원격 최신 반영 (다른 사람 변경 가능성)
+git pull origin main
+
+# 3) 변경 스테이징 & 커밋
 git add .
 git commit -m "작업 내용"
 
-# 3) push
+# 4) push 직전 다시 pull (권장)
+git pull origin main
+
+# 5) push
 git push origin main
 ```
 
@@ -230,7 +310,7 @@ git push origin main
 
 ---
 
-## 6. Cursor AI 활용 팁
+## 7. Cursor AI 활용 팁
 
 | 작업 | Cursor에서 |
 |------|------------|
@@ -243,24 +323,25 @@ git push origin main
 
 ---
 
-## 7. 문제 해결 요약표
+## 8. 문제 해결 요약표
 
 | 메시지 | 주된 원인 | 조치 |
 |--------|-----------|------|
 | Repository not found | URL 오타, 로그인 계정 불일치 | `remote set-url`, 자격 증명 재설정 |
 | remote origin already exists | origin 중복 등록 시도 | `remote set-url` 사용 |
-| fetch first / rejected | 원격·로컬 이력 불일치 | `pull --allow-unrelated-histories` 또는 협의 후 force |
+| fetch first / rejected (초기) | 원격·로컬 **첫 이력** 불일치 | `pull --allow-unrelated-histories` 또는 협의 후 force |
+| fetch first / rejected (협업) | 다른 사람이 먼저 push | `git pull origin main` 후 충돌 해결 → `push` |
 | Everything up-to-date | 이미 동기화됨 | 로컬에서 commit 했는지 확인 |
 | no changes added to commit | `git add` 누락 | `git add .` 후 commit |
 | modified: frontend (submodule) | 중첩 Git (과거) | **통합 완료** — 루트에서만 commit |
 
 ---
 
-## 8. 참고 링크
+## 9. 참고 링크
 
 - 저장소: [https://github.com/wjddmlxo-1/tvframework](https://github.com/wjddmlxo-1/tvframework)
 - 프론트 개발 환경: [frontend/Docs/development-env-setting.md](../frontend/Docs/development-env-setting.md)
 
 ---
 
-*문서 작성: tvframework Git/GitHub 연동 작업(원격 URL 수정, 서브모듈 통합, push·commit 이슈 대응) 기준*
+*문서 작성: tvframework Git/GitHub 연동 작업(원격 URL 수정, 서브모듈 통합, push·commit·pull 협업 흐름) 기준*
